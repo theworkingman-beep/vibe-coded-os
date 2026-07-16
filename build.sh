@@ -29,18 +29,7 @@ cargo build -p kernel --no-default-features --features "$FEATURES" \
 
 KERNEL_ELF="target/$TARGET/debug/kernel"
 ISO_IMAGE="target/aperture-${ARCH}.iso"
-DISK_IMAGE="target/aperture-${ARCH}-disk.img"
 
-# The installer disk image is only useful on x86_64 where an ATA driver exists.
-# On AArch64 the raw disk image adds ~100 MiB to the ISO as a Limine module
-# and can exhaust the UEFI firmware's high-memory allocator, so omit it.
-if [[ "$ARCH" == "x86_64" ]]; then
-    echo "Building disk image..."
-    tools/build-disk-image.sh "$ARCH" "$KERNEL_ELF" "$DISK_IMAGE"
-    echo "Building Limine boot image..."
-    tools/build-image.sh "$ARCH" "$KERNEL_ELF" "$ISO_IMAGE" "$DISK_IMAGE"
-else
-    echo "Building Limine boot image..."
-    tools/build-image.sh "$ARCH" "$KERNEL_ELF" "$ISO_IMAGE"
-fi
+echo "Building Limine boot image..."
+tools/build-image.sh "$ARCH" "$KERNEL_ELF" "$ISO_IMAGE"
 echo "Boot image: $ISO_IMAGE"
