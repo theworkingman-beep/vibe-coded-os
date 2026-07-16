@@ -1,5 +1,7 @@
 //! Minimal serial logger with an in-memory ring buffer.
 
+extern crate alloc;
+
 use core::fmt::{self, Write};
 use spin::Mutex;
 
@@ -89,6 +91,36 @@ pub fn dump_ring_buffer() {
     let _ = writer.write_str("--- kernel log ring buffer ---\n");
     RING_BUFFER.lock().dump(&mut writer);
     let _ = writer.write_str("\n--- end ring buffer ---\n");
+}
+
+/// Invoke `f` with the ring buffer contents as a contiguous byte slice.
+///
+/// The callback receives the most recent `max_bytes` of the log (up to the
+/// full ring buffer size).  Non-UTF-8 bytes are preserved as Latin-1.
+pub fn with_contents(max_bytes: usize, f: impl FnOnce(&[u8])) {
+    let ring = RING_BUFFER.lock();
+    let take = ring.len.min(max_bytes);
+    let mut temp = alloc::vec::Vec::with_capacity(take);
+    for i in 0..take {
+        temp.push(ring.buf[(ring.head + ring.len - take + i) % RING_SIZE]);
+    }
+    f(&temp);
+}
+
+/// Return the most recent `max_lines` of the log as a `String`.
+#[allow(dead_code)]
+pub fn recent_lines(max_lines: usize, max_bytes: usize) -> alloc::string::String {
+    let mut text = alloc::string::String::new();
+    with_contents(max_bytes, |bytes| {
+        let s = alloc::string::String::from_utf8_lossy(bytes);
+        let lines: alloc::vec::Vec<&str> = s.lines().collect();
+        let start = lines.len().saturating_sub(max_lines);
+        for line in &lines[start..] {
+            text.push_str(line);
+            text.push('\n');
+        }
+    });
+    text
 }
 
 #[macro_export]

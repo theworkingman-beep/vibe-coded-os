@@ -46,11 +46,18 @@ pub fn debug_putchar(byte: u8) {
         let mut debug_port: Port<u8> = Port::new(0xE9);
         debug_port.write(byte);
 
-        // COM1 UART: poll THR empty and send.
+        // COM1 UART: configure 8N1, then poll THR empty with a timeout so a
+        // missing UART does not hang the kernel on real hardware.
         let mut lcr: Port<u8> = Port::new(LCR);
         lcr.write(LCR_8N1);
-        let mut lsr: Port<u8> = Port::new(LSR);
-        while lsr.read() & LSR_THR_EMPTY == 0 {}
+        let _ = crate::time::poll_with_timeout(10, || {
+            let mut lsr: Port<u8> = Port::new(LSR);
+            if lsr.read() & LSR_THR_EMPTY != 0 {
+                Some(())
+            } else {
+                None
+            }
+        });
         let mut thr: Port<u8> = Port::new(THR);
         thr.write(byte);
     }
@@ -69,6 +76,22 @@ pub fn mouse_buttons() -> u8 {
 /// Halt the CPU until the next interrupt, then return.
 pub fn halt_once() {
     x86_64::instructions::hlt();
+}
+
+/// Return a monotonic cycle counter for timeout/heartbeat purposes.
+///
+/// Uses the Time Stamp Counter.  The TSC is guaranteed to be available in
+/// x86_64 long mode, though it may not be invariant on very old CPUs; for
+/// simple timeouts that only requires monotonicity within a boot session.
+pub fn monotonic_cycles() -> u64 {
+    unsafe { core::arch::x86_64::_rdtsc() }
+}
+
+/// Return the nominal TSC frequency in Hz, or 0 if unknown.
+pub fn cycles_per_second() -> u64 {
+    // Without CPUID leaf 0x15/0x16 support this is a best-guess.  On QEMU and
+    // most real hardware 1 GHz is close enough for millisecond-scale timeouts.
+    1_000_000_000
 }
 
 /// Halt the CPU forever.

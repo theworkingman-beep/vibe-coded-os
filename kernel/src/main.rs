@@ -90,23 +90,27 @@ extern "C" fn _start() -> ! {
 
     // Collect the memory map into a fixed-size buffer before initializing
     // subsystems; the physical allocator and the captured kernel page table
-    // are needed by x86_64 interrupt setup.
+    // are needed by x86_64 interrupt setup.  Detailed logging happens after
+    // the logger is initialized in kernel::init().
     let mut regions = [kernel::boot_info::MemoryRegion::default(); 64];
     let mut region_count = 0usize;
     let mut usable = None;
+    let mut usable_total = 0u64;
     if let Some(memmap) = MEMMAP_REQUEST.response() {
         for entry in memmap.entries() {
             if region_count >= regions.len() {
                 break;
             }
             let region = kernel::boot_info::MemoryRegion::from_limine(entry);
-            if region.kind == kernel::boot_info::MemoryRegionKind::Usable
-                && region.end - region.start >= 0x10_0000
-            {
-                if usable.map_or(true, |r: kernel::boot_info::MemoryRegion| {
-                    region.end - region.start > r.end - r.start
-                }) {
-                    usable = Some(region);
+            let size = region.end.saturating_sub(region.start);
+            if region.kind == kernel::boot_info::MemoryRegionKind::Usable {
+                usable_total += size;
+                if size >= 0x10_0000 {
+                    if usable.map_or(true, |r: kernel::boot_info::MemoryRegion| {
+                        size > r.end.saturating_sub(r.start)
+                    }) {
+                        usable = Some(region);
+                    }
                 }
             }
             regions[region_count] = region;
@@ -118,9 +122,27 @@ extern "C" fn _start() -> ! {
         #[cfg(feature = "arch_x86_64")]
         kernel::mm::page_table::capture_kernel_page_table();
     }
-    kernel::logln!("Physical frame allocator initialized ({} regions).", region_count);
 
     kernel::init();
+    kernel::logln!(
+        "Physical frame allocator initialized ({} regions, {} MiB usable).",
+        region_count,
+        usable_total / 1024 / 1024
+    );
+    // Reconcile and log the memory map.  On real hardware the map may contain
+    // holes, ACPI regions, reserved MMIO, and bad-memory entries.
+    for i in 0..region_count {
+        let r = regions[i];
+        let size = r.end.saturating_sub(r.start);
+        kernel::logln!(
+            "memmap[{}]: {} {:#x}-{:#x} ({} MiB)",
+            i,
+            r.kind.name(),
+            r.start,
+            r.end,
+            size / 1024 / 1024
+        );
+    }
     kernel::logln!("Aperture OS {} kernel booting...",
         if cfg!(feature = "arch_x86_64") { "x86_64" } else { "AArch64" });
     kernel::logln!("HHDM offset: {:#x}", hhdm);

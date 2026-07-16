@@ -29,7 +29,13 @@ impl Default for MemoryRegion {
 pub enum MemoryRegionKind {
     Usable,
     Reserved,
-    Bootloader,
+    AcpiReclaimable,
+    AcpiNvs,
+    BadMemory,
+    BootloaderReclaimable,
+    ExecutableAndModules,
+    Framebuffer,
+    MappedReserved,
     Unknown,
 }
 
@@ -38,10 +44,31 @@ impl MemoryRegionKind {
     pub fn from_limine(type_: u64) -> Self {
         match type_ {
             memmap::MEMMAP_USABLE => MemoryRegionKind::Usable,
-            memmap::MEMMAP_BOOTLOADER_RECLAIMABLE
-            | memmap::MEMMAP_EXECUTABLE_AND_MODULES
-            | memmap::MEMMAP_FRAMEBUFFER => MemoryRegionKind::Bootloader,
-            _ => MemoryRegionKind::Reserved,
+            memmap::MEMMAP_RESERVED => MemoryRegionKind::Reserved,
+            memmap::MEMMAP_ACPI_RECLAIMABLE => MemoryRegionKind::AcpiReclaimable,
+            memmap::MEMMAP_ACPI_NVS => MemoryRegionKind::AcpiNvs,
+            memmap::MEMMAP_BAD_MEMORY => MemoryRegionKind::BadMemory,
+            memmap::MEMMAP_BOOTLOADER_RECLAIMABLE => MemoryRegionKind::BootloaderReclaimable,
+            memmap::MEMMAP_EXECUTABLE_AND_MODULES => MemoryRegionKind::ExecutableAndModules,
+            memmap::MEMMAP_FRAMEBUFFER => MemoryRegionKind::Framebuffer,
+            memmap::MEMMAP_MAPPED_RESERVED => MemoryRegionKind::MappedReserved,
+            _ => MemoryRegionKind::Unknown,
+        }
+    }
+
+    /// Human-readable name for logging.
+    pub fn name(self) -> &'static str {
+        match self {
+            MemoryRegionKind::Usable => "usable",
+            MemoryRegionKind::Reserved => "reserved",
+            MemoryRegionKind::AcpiReclaimable => "acpi-reclaimable",
+            MemoryRegionKind::AcpiNvs => "acpi-nvs",
+            MemoryRegionKind::BadMemory => "bad-memory",
+            MemoryRegionKind::BootloaderReclaimable => "bootloader-reclaimable",
+            MemoryRegionKind::ExecutableAndModules => "executable/modules",
+            MemoryRegionKind::Framebuffer => "framebuffer",
+            MemoryRegionKind::MappedReserved => "mapped-reserved",
+            MemoryRegionKind::Unknown => "unknown",
         }
     }
 }

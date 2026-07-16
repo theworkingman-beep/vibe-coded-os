@@ -12,6 +12,7 @@ pub mod installer;
 pub mod logger;
 pub mod mm;
 pub mod panic;
+pub mod time;
 pub mod vfs;
 pub mod win32;
 

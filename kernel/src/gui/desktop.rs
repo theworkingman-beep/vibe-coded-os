@@ -19,6 +19,7 @@ const BUTTON_Y: i32 = 3;
 
 static mut DESKTOP_WINDOW: Option<WindowId> = None;
 static mut TERMINAL_WINDOW: Option<WindowId> = None;
+static mut DMESG_WINDOW: Option<WindowId> = None;
 static mut BUTTON_DOWN_LAST: bool = false;
 static mut TERMINAL_TEXT_LEN: usize = 0;
 static mut TERMINAL_TEXT: [u8; 256] = [0; 256];
@@ -102,10 +103,12 @@ pub fn type_char(ch: char) {
             super::request_render();
             return;
         }
-        if TERMINAL_WINDOW.is_none() {
-            // Global shortcut: 'i' opens the installer.
-            if ch == 'i' || ch == 'I' {
-                installer::open();
+        if TERMINAL_WINDOW.is_none() && DMESG_WINDOW.is_none() {
+            // Global shortcuts when no modal window is open.
+            match ch {
+                'i' | 'I' => installer::open(),
+                'd' | 'D' => open_dmesg(),
+                _ => {}
             }
             super::request_render();
             return;
@@ -136,6 +139,35 @@ fn open_terminal() {
             TERMINAL_WINDOW = id;
         }
         redraw_terminal();
+        super::request_render();
+    }
+}
+
+fn open_dmesg() {
+    unsafe {
+        if DMESG_WINDOW.is_none() {
+            let id = create_window("dmesg", 80, 60, 560, 400);
+            DMESG_WINDOW = id;
+        }
+        redraw_dmesg();
+        super::request_render();
+    }
+}
+
+fn redraw_dmesg() {
+    unsafe {
+        let Some(win) = DMESG_WINDOW else { return };
+        clear_window(Some(win), Color::new(0x10, 0x10, 0x10));
+        draw_text(Some(win), "Kernel log (dmesg)", 12, 12, Color::WHITE);
+        let text = crate::logger::recent_lines(40, 8192);
+        let mut y = 32;
+        for line in text.lines() {
+            draw_text(Some(win), line, 12, y, Color::new(0x00, 0xFF, 0x00));
+            y += 8;
+            if y > 380 {
+                break;
+            }
+        }
         super::request_render();
     }
 }

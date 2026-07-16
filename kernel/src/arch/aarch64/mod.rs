@@ -45,15 +45,21 @@ pub fn debug_putchar(byte: u8) {
 
 /// Output a single byte to the PL011 UART if it is mapped.
 ///
-/// Not currently used because the UART MMIO may not be part of the HHDM.
+/// Uses a short timeout so a missing or unmapped PL011 does not hang the
+/// kernel on real hardware.
 #[allow(dead_code)]
 pub fn pl011_putchar(byte: u8) {
     let base = crate::mm::hhdm::phys_to_virt(PL011_BASE_PHYS as u64) as usize;
     let fr = (base + PL011_FR) as *mut u32;
     let dr = (base + PL011_UARTDR) as *mut u32;
     unsafe {
-        // Spin until the transmit FIFO has room.
-        while fr.read_volatile() & FR_TXFF != 0 {}
+        let _ = crate::time::poll_with_timeout(10, || {
+            if fr.read_volatile() & FR_TXFF == 0 {
+                Some(())
+            } else {
+                None
+            }
+        });
         dr.write_volatile(byte as u32);
     }
 }
@@ -82,6 +88,28 @@ pub fn without_interrupts<R>(f: impl FnOnce() -> R) -> R {
         core::arch::asm!("msr daif, {0}", in(reg) saved, options(nomem, nostack));
         result
     }
+}
+
+/// Return a monotonic cycle counter for timeout/heartbeat purposes.
+///
+/// Reads the architected virtual counter.  CNTVCT is available at EL1 and is
+/// configured by firmware; if it is not running this will return a static
+/// value and software timeouts will not advance.
+pub fn monotonic_cycles() -> u64 {
+    let cntvct: u64;
+    unsafe {
+        core::arch::asm!("mrs {0}, cntvct_el0", out(reg) cntvct, options(nomem, nostack));
+    }
+    cntvct
+}
+
+/// Return the nominal counter frequency in Hz, or 0 if unknown.
+pub fn cycles_per_second() -> u64 {
+    let cntfrq: u64;
+    unsafe {
+        core::arch::asm!("mrs {0}, cntfrq_el0", out(reg) cntfrq, options(nomem, nostack));
+    }
+    cntfrq
 }
 
 /// Halt the CPU until the next interrupt, then return.
