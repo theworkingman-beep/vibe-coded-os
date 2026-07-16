@@ -37,9 +37,6 @@ jobs:
       - name: Build x86_64 kernel and boot images
         run: ./build.sh x86_64
 
-      - name: Create hybrid BIOS+UEFI ISO
-        run: ./build-iso.sh
-
       - name: Boot test x86_64 ISO in QEMU/SeaBIOS
         run: |
           timeout 60s qemu-system-x86_64 \
@@ -106,10 +103,30 @@ jobs:
       - name: Install AArch64 build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu xorriso
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu qemu-system-arm qemu-efi-aarch64 xorriso
 
       - name: Build AArch64 kernel and boot image
-        run: ARCH=aarch64 ./build.sh
+        run: ./build.sh aarch64
+
+      - name: Boot test AArch64 ISO in QEMU/virt with UEFI
+        run: |
+          cp /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /tmp/aarch64_efi.fd
+          timeout 60s qemu-system-aarch64 \
+            -machine virt -cpu cortex-a72 -m 512 \
+            -bios /tmp/aarch64_efi.fd \
+            -cdrom target/aperture-aarch64.iso -boot d \
+            -serial file:/tmp/qemu-aarch64.log -display none \
+            -device ramfb -semihosting \
+            2>&1 || true
+          echo "--- AArch64 UEFI boot log ---"
+          tail -40 /tmp/qemu-aarch64.log
+          if grep -q "Aperture OS AArch64 kernel booting" /tmp/qemu-aarch64.log && \
+             grep -q "Framebuffer:" /tmp/qemu-aarch64.log; then
+            echo "AArch64 UEFI boot test passed"
+          else
+            echo "AArch64 UEFI boot test failed"
+            exit 1
+          fi
 
       - name: Run host tests
         run: cargo test -p x86-decode -p pe-parser -p aarch64-decode
