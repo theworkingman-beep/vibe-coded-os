@@ -47,16 +47,14 @@ pub fn poll_with_timeout<T>(
         if timeout.expired() {
             return None;
         }
-        crate::arch::without_interrupts(|| {
-            // A single pause/yield to reduce bus traffic while polling.
-            #[cfg(feature = "arch_x86_64")]
-            unsafe {
-                core::arch::x86_64::_mm_pause();
-            }
-            #[cfg(feature = "arch_aarch64")]
-            unsafe {
-                core::arch::asm!("yield", options(nomem, nostack));
-            }
-        });
+        // A single pause/yield to reduce bus traffic while polling.
+        #[cfg(feature = "arch_x86_64")]
+        unsafe {
+            core::arch::x86_64::_mm_pause();
+        }
+        #[cfg(feature = "arch_aarch64")]
+        unsafe {
+            core::arch::asm!("yield", options(nomem, nostack));
+        }
     }
 }

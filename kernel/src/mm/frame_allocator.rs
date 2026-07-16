@@ -188,6 +188,24 @@ pub fn total() -> usize {
     FRAME_ALLOC.lock().total_frames()
 }
 
+/// Reserve a physical address range so the allocator will never hand it out.
+/// Used to protect the early bump heap region from being reused.
+pub fn reserve_range(start: u64, end: u64) {
+    let guard = FRAME_ALLOC.lock();
+    let first = guard.first_frame;
+    let last = first + guard.frame_count as u64 * FRAME_SIZE;
+    let start = start.max(first);
+    let end = end.min(last);
+    let mut frame = align_up(start, FRAME_SIZE);
+    while frame < end {
+        let index = ((frame - first) / FRAME_SIZE) as usize;
+        if index < guard.frame_count {
+            guard.mark(index, true);
+        }
+        frame += FRAME_SIZE;
+    }
+}
+
 fn align_up(addr: u64, align: u64) -> u64 {
     (addr + align - 1) & !(align - 1)
 }
