@@ -42,22 +42,23 @@ jobs:
 
       - name: Boot test x86_64 ISO in QEMU/SeaBIOS
         run: |
-          timeout 30s qemu-system-x86_64 \
-            -cdrom target/aperture.iso -boot d \
-            -m 512 -smp 1 -serial stdio -display none \
-            2>&1 | tee /tmp/qemu-bios.log || true
+          timeout 60s qemu-system-x86_64 \
+            -cdrom target/aperture-x86_64.iso -boot d \
+            -m 512 -smp 1 -serial file:/tmp/qemu-bios.log -display none \
+            2>&1 || true
+          echo "--- BIOS boot log ---"
+          tail -40 /tmp/qemu-bios.log
           if grep -q "Aperture OS x86_64 kernel booting" /tmp/qemu-bios.log; then
             echo "BIOS boot test passed"
           else
             echo "BIOS boot test failed"
-            cat /tmp/qemu-bios.log
             exit 1
           fi
 
       - name: Boot test x86_64 ISO in QEMU/OVMF
         run: |
-          OVMF_CODE="$(find /usr/share -maxdepth 3 -name 'OVMF_CODE*.fd' | head -n1)"
-          OVMF_VARS="$(find /usr/share -maxdepth 3 -name 'OVMF_VARS*.fd' | head -n1)"
+          OVMF_CODE="$(find /usr/share -maxdepth 3 -name 'OVMF_CODE_4M.fd' | head -n1)"
+          OVMF_VARS="$(find /usr/share -maxdepth 3 -name 'OVMF_VARS_4M.fd' | head -n1)"
           echo "OVMF code: $OVMF_CODE"
           echo "OVMF vars: $OVMF_VARS"
           if [[ -z "$OVMF_CODE" || -z "$OVMF_VARS" ]]; then
@@ -65,14 +66,14 @@ jobs:
             exit 1
           fi
           cp "$OVMF_VARS" /tmp/ovmf_vars.fd
-          timeout 30s qemu-system-x86_64 \
+          timeout 60s qemu-system-x86_64 \
             -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
             -drive if=pflash,format=raw,file=/tmp/ovmf_vars.fd \
-            -cdrom target/aperture.iso -boot d \
-            -m 512 -smp 1 -serial stdio -display none \
-            2>&1 | tee /tmp/qemu-uefi.log || true
+            -cdrom target/aperture-x86_64.iso -boot d \
+            -m 512 -smp 1 -serial file:/tmp/qemu-uefi.log -display none \
+            2>&1 || true
           echo "--- UEFI boot log ---"
-          cat /tmp/qemu-uefi.log
+          tail -40 /tmp/qemu-uefi.log
 
       - name: Run host tests
         run: cargo test -p x86-decode -p pe-parser -p aarch64-decode
@@ -82,15 +83,15 @@ jobs:
         with:
           name: aperture-os-x86_64-boot-images
           path: |
-            target/aperture-uefi.img
-            target/aperture-bios.img
+            target/aperture-x86_64-disk.img
+            target/aperture-x86_64.iso
           if-no-files-found: error
 
       - name: Upload x86_64 ISO
         uses: actions/upload-artifact@v4
         with:
           name: aperture-os-x86_64-iso
-          path: target/aperture.iso
+          path: target/aperture-x86_64.iso
           if-no-files-found: error
 
   build-aarch64:
@@ -168,7 +169,7 @@ jobs:
 
       - name: Rename assets with timestamp
         run: |
-          mv release/aperture.iso "release/aperture-os-x86_64-${RELEASE_TS}.iso"
+          mv release/aperture-x86_64.iso "release/aperture-os-x86_64-${RELEASE_TS}.iso"
           mv release/kernel "release/aperture-os-aarch64-${RELEASE_TS}.elf"
           mv release/aperture-aarch64.iso "release/aperture-os-aarch64-${RELEASE_TS}.iso"
         env:

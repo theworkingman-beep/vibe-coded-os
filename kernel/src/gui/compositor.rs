@@ -67,9 +67,17 @@ impl Compositor {
             core::mem::align_of::<Color>(),
         )
         .expect("Failed to allocate window backbuffer") as *mut Color;
-        unsafe {
-            core::slice::from_raw_parts_mut(backbuffer, pixel_count).fill(Color::WHITE);
-        }
+        crate::logln!(
+            "compositor: window {} backbuffer={:?} pixels={}",
+            id.0,
+            backbuffer,
+            pixel_count
+        );
+        crate::arch::without_interrupts(|| {
+            unsafe {
+                core::slice::from_raw_parts_mut(backbuffer, pixel_count).fill(Color::WHITE);
+            }
+        });
 
         let mut title_buf = [0u8; 64];
         let len = title.len().min(63);
@@ -123,28 +131,96 @@ impl Compositor {
         }
     }
 
+
     fn clear(&mut self, color: Color) {
-        let info = self.info;
-        for y in 0..info.height {
-            for x in 0..info.width {
-                self.write_pixel(x as i32, y as i32, color);
-            }
+        let width = self.info.width;
+        let height = self.info.height;
+        let bytes_per_pixel = self.info.bytes_per_pixel;
+        let stride = self.info.stride;
+        let encoded = self.encode_color(color);
+
+        let row_len = width * bytes_per_pixel;
+        let buf = unsafe { core::slice::from_raw_parts_mut(self.buffer, self.buffer_len) };
+        for x in 0..width {
+            buf[x * bytes_per_pixel..(x + 1) * bytes_per_pixel]
+                .copy_from_slice(&encoded[..bytes_per_pixel]);
+        }
+        for y in 1..height {
+            let start = y * stride;
+            buf.copy_within(0..row_len, start);
         }
     }
 
     fn draw_window(&mut self, window: &Window) {
-        let backbuffer = unsafe { core::slice::from_raw_parts(window.backbuffer, window.pixel_count) };
+        let bytes_per_pixel = self.info.bytes_per_pixel;
+        let stride = self.info.stride;
+        let win_width = window.width as usize;
+
+        let buf = unsafe { core::slice::from_raw_parts_mut(self.buffer, self.buffer_len) };
         for local_y in 0..window.height {
-            for local_x in 0..window.width {
-                let src = backbuffer[(local_y * window.width + local_x) as usize];
-                let global_x = window.x + local_x;
-                let global_y = window.y + local_y;
+            let global_y = window.y + local_y;
+            if global_y < 0 || global_y >= self.info.height as i32 {
+                continue;
+            }
+            let src_row = unsafe {
+                core::slice::from_raw_parts(window.backbuffer.add(local_y as usize * win_width), win_width)
+            };
+            let dst_row_start = global_y as usize * stride + window.x as usize * bytes_per_pixel;
+            let dst_row = &mut buf[dst_row_start..dst_row_start + window.width as usize * bytes_per_pixel];
+
+            for local_x in 0..window.width as usize {
+                let src = src_row[local_x];
+                let offset = local_x * bytes_per_pixel;
                 if src.a == 255 {
-                    self.write_pixel_unchecked(global_x, global_y, src);
+                    dst_row[offset..offset + bytes_per_pixel]
+                        .copy_from_slice(&self.encode_color(src)[..bytes_per_pixel]);
                 } else if src.a != 0 {
-                    let dst = self.read_pixel(global_x, global_y);
-                    self.write_pixel_unchecked(global_x, global_y, blend(src, dst));
+                    let mut dst_bytes = [0u8; 4];
+                    dst_bytes[..bytes_per_pixel]
+                        .copy_from_slice(&dst_row[offset..offset + bytes_per_pixel]);
+                    let dst = self.decode_color(&dst_bytes[..bytes_per_pixel]);
+                    dst_row[offset..offset + bytes_per_pixel]
+                        .copy_from_slice(&self.encode_color(blend(src, dst))[..bytes_per_pixel]);
                 }
+            }
+        }
+    }
+
+    /// Encode a `Color` into the framebuffer's native byte layout.
+    fn encode_color(&self, color: Color) -> [u8; 4] {
+        match self.info.pixel_format {
+            PixelFormat::Rgb => [color.r, color.g, color.b, 0],
+            PixelFormat::Bgr => [color.b, color.g, color.r, 0],
+            PixelFormat::U8 => [color.r, 0, 0, 0],
+            PixelFormat::Unknown {
+                red_position,
+                green_position,
+                blue_position,
+            } => {
+                let mut pixel = [0u8; 4];
+                pixel[(red_position as usize / 8).min(3)] = color.r;
+                pixel[(green_position as usize / 8).min(3)] = color.g;
+                pixel[(blue_position as usize / 8).min(3)] = color.b;
+                pixel
+            }
+        }
+    }
+
+    /// Decode a `Color` from the framebuffer's native byte layout.
+    fn decode_color(&self, bytes: &[u8]) -> Color {
+        match self.info.pixel_format {
+            PixelFormat::Rgb => Color::new(bytes[0], bytes[1], bytes[2]),
+            PixelFormat::Bgr => Color::new(bytes[2], bytes[1], bytes[0]),
+            PixelFormat::U8 => Color::new(bytes[0], bytes[0], bytes[0]),
+            PixelFormat::Unknown {
+                red_position,
+                green_position,
+                blue_position,
+            } => {
+                let r = bytes.get(red_position as usize / 8).copied().unwrap_or(0);
+                let g = bytes.get(green_position as usize / 8).copied().unwrap_or(0);
+                let b = bytes.get(blue_position as usize / 8).copied().unwrap_or(0);
+                Color::new(r, g, b)
             }
         }
     }
@@ -160,7 +236,8 @@ impl Compositor {
     fn write_pixel_unchecked(&mut self, x: i32, y: i32, color: Color) {
         let bytes_per_pixel = self.info.bytes_per_pixel as usize;
         let stride = self.info.stride;
-        let offset = ((y as usize * stride) + x as usize) * bytes_per_pixel;
+        // `stride` is already in bytes (Limine's `pitch`), so only scale x.
+        let offset = (y as usize * stride) + (x as usize * bytes_per_pixel);
         let bytes = match self.info.pixel_format {
             PixelFormat::Rgb => [color.r, color.g, color.b, 0],
             PixelFormat::Bgr => [color.b, color.g, color.r, 0],
@@ -187,7 +264,7 @@ impl Compositor {
         }
         let bytes_per_pixel = self.info.bytes_per_pixel as usize;
         let stride = self.info.stride;
-        let offset = ((y as usize * stride) + x as usize) * bytes_per_pixel;
+        let offset = (y as usize * stride) + (x as usize * bytes_per_pixel);
         let buf = unsafe { core::slice::from_raw_parts(self.buffer, self.buffer_len) };
         match self.info.pixel_format {
             PixelFormat::Rgb => Color::new(buf[offset], buf[offset + 1], buf[offset + 2]),

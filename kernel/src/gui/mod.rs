@@ -11,6 +11,7 @@ pub mod compositor;
 pub mod cursor;
 pub mod desktop;
 pub mod font;
+pub mod widgets;
 
 pub use compositor::WindowId;
 pub(crate) use compositor::Compositor;
@@ -25,16 +26,35 @@ pub fn init() {
 /// Set up the compositor once the framebuffer is known.
 pub fn init_compositor(buffer: &'static mut [u8], info: FrameBufferInfo) {
     *COMPOSITOR.lock() = Some(Compositor::new(buffer, info));
-    // Create a root desktop window.
-    if let Some(c) = COMPOSITOR.lock().as_mut() {
-        let _desktop = c.create_window("Desktop", 0, 0, info.width as i32, info.height as i32);
-    }
+    request_render();
+}
+
+static mut NEEDS_RENDER: bool = true;
+
+/// Mark the framebuffer as dirty so the scene is redrawn on the next frame.
+pub fn request_render() {
+    unsafe { NEEDS_RENDER = true; }
+}
+
+/// Clear the render demand flag.  Called by the main loop after rendering.
+pub fn clear_render_request() {
+    unsafe { NEEDS_RENDER = false; }
+}
+
+/// Return true if the compositor has been asked to redraw.
+pub fn needs_render() -> bool {
+    unsafe { NEEDS_RENDER }
 }
 
 /// Render the current scene to the framebuffer, including the mouse cursor.
 pub fn render() {
     if let Some(c) = COMPOSITOR.lock().as_mut() {
-        c.render();
+        // Large framebuffer fills are not interrupt-safe in the current debug
+        // build; disable interrupts for the duration of the render to avoid
+        // memory corruption from reentrant slice operations.
+        crate::arch::without_interrupts(|| {
+            c.render();
+        });
         let (mx, my) = crate::arch::mouse_position();
         cursor::draw_cursor(c, mx, my);
     }

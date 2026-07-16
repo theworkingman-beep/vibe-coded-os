@@ -2,9 +2,13 @@
 #![cfg_attr(all(feature = "arch_x86_64", test), no_main)]
 #![cfg_attr(feature = "arch_x86_64", feature(abi_x86_interrupt))]
 
+extern crate alloc;
+
 pub mod arch;
 pub mod boot_info;
+pub mod disk;
 pub mod gui;
+pub mod installer;
 pub mod logger;
 pub mod mm;
 pub mod panic;
@@ -13,12 +17,28 @@ pub mod win32;
 
 /// Kernel initialization entry common to all architectures.
 pub fn init() {
+    #[cfg(feature = "arch_x86_64")]
+    x86_64::instructions::interrupts::disable();
+
     logger::init();
+    logln!("init: logger");
     arch::init();
+    #[cfg(feature = "arch_x86_64")]
+    x86_64::instructions::interrupts::disable();
+    logln!("init: arch done");
     mm::init();
+    logln!("init: mm done");
+    disk::init();
+    logln!("init: disk done ({} devices)", disk::device_count());
     vfs::init();
+    logln!("init: vfs done");
     gui::init();
+    logln!("init: gui done");
     win32::init();
+    logln!("init: win32 done");
+
+    #[cfg(feature = "arch_x86_64")]
+    x86_64::instructions::interrupts::enable();
 }
 
 /// Halt the CPU forever.

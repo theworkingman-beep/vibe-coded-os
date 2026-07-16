@@ -1,8 +1,10 @@
 //! Bootloader-independent boot information types.
 //!
-//! These types mirror the fields we need from `bootloader_api` so that the
-//! kernel can be built for architectures that do not use the `bootloader`
-//! crate.
+//! These types are populated from the Limine boot protocol responses in
+//! `kernel_main` and consumed by the architecture-independent kernel code.
+
+use limine::memmap;
+use limine::framebuffer::{Framebuffer, FRAMEBUFFER_RGB};
 
 /// Physical memory region reported by the bootloader/firmware.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +33,30 @@ pub enum MemoryRegionKind {
     Unknown,
 }
 
+impl MemoryRegionKind {
+    /// Map a Limine memory map entry type to the kernel's region kind.
+    pub fn from_limine(type_: u64) -> Self {
+        match type_ {
+            memmap::MEMMAP_USABLE => MemoryRegionKind::Usable,
+            memmap::MEMMAP_BOOTLOADER_RECLAIMABLE
+            | memmap::MEMMAP_EXECUTABLE_AND_MODULES
+            | memmap::MEMMAP_FRAMEBUFFER => MemoryRegionKind::Bootloader,
+            _ => MemoryRegionKind::Reserved,
+        }
+    }
+}
+
+impl MemoryRegion {
+    /// Build a region from a Limine memory map entry.
+    pub fn from_limine(entry: &memmap::Entry) -> Self {
+        Self {
+            start: entry.base,
+            end: entry.base + entry.length,
+            kind: MemoryRegionKind::from_limine(entry.type_),
+        }
+    }
+}
+
 /// Pixel format of the framebuffer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PixelFormat {
@@ -54,59 +80,26 @@ pub struct FrameBufferInfo {
     pub pixel_format: PixelFormat,
 }
 
-#[cfg(feature = "arch_x86_64")]
-impl From<bootloader_api::info::MemoryRegionKind> for MemoryRegionKind {
-    fn from(kind: bootloader_api::info::MemoryRegionKind) -> Self {
-        match kind {
-            bootloader_api::info::MemoryRegionKind::Usable => MemoryRegionKind::Usable,
-            bootloader_api::info::MemoryRegionKind::Bootloader => MemoryRegionKind::Bootloader,
-            bootloader_api::info::MemoryRegionKind::UnknownUefi(_) => MemoryRegionKind::Unknown,
-            _ => MemoryRegionKind::Reserved,
-        }
-    }
-}
-
-#[cfg(feature = "arch_x86_64")]
-impl From<bootloader_api::info::MemoryRegion> for MemoryRegion {
-    fn from(region: bootloader_api::info::MemoryRegion) -> Self {
+impl FrameBufferInfo {
+    /// Build framebuffer metadata from a Limine framebuffer descriptor.
+    pub fn from_limine(fb: &Framebuffer) -> Self {
+        let pixel_format = if fb.memory_model == FRAMEBUFFER_RGB {
+            // Limine reports an RGB memory model; on little-endian x86/aarch64
+            // the 32-bit pixel layout in memory is BGR, matching QEMU.
+            PixelFormat::Bgr
+        } else {
+            PixelFormat::Unknown {
+                red_position: fb.red_mask_shift,
+                green_position: fb.green_mask_shift,
+                blue_position: fb.blue_mask_shift,
+            }
+        };
         Self {
-            start: region.start,
-            end: region.end,
-            kind: region.kind.into(),
-        }
-    }
-}
-
-#[cfg(feature = "arch_x86_64")]
-impl From<bootloader_api::info::PixelFormat> for PixelFormat {
-    fn from(fmt: bootloader_api::info::PixelFormat) -> Self {
-        match fmt {
-            bootloader_api::info::PixelFormat::Rgb => PixelFormat::Rgb,
-            bootloader_api::info::PixelFormat::Bgr => PixelFormat::Bgr,
-            bootloader_api::info::PixelFormat::U8 => PixelFormat::U8,
-            bootloader_api::info::PixelFormat::Unknown {
-                red_position,
-                green_position,
-                blue_position,
-            } => PixelFormat::Unknown {
-                red_position,
-                green_position,
-                blue_position,
-            },
-            _ => PixelFormat::Rgb,
-        }
-    }
-}
-
-#[cfg(feature = "arch_x86_64")]
-impl From<bootloader_api::info::FrameBufferInfo> for FrameBufferInfo {
-    fn from(info: bootloader_api::info::FrameBufferInfo) -> Self {
-        Self {
-            width: info.width,
-            height: info.height,
-            stride: info.stride,
-            bytes_per_pixel: info.bytes_per_pixel,
-            pixel_format: info.pixel_format.into(),
+            width: fb.width as usize,
+            height: fb.height as usize,
+            stride: fb.pitch as usize,
+            bytes_per_pixel: (fb.bpp as usize + 7) / 8,
+            pixel_format,
         }
     }
 }

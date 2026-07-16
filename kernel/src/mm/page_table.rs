@@ -11,13 +11,19 @@ mod x86_64_impl {
     const PAGE_PRESENT: u64 = 1 << 0;
     const PAGE_WRITABLE: u64 = 1 << 1;
     const PAGE_USER: u64 = 1 << 2;
+    const PAGE_WRITE_THROUGH: u64 = 1 << 3;
+    const PAGE_NO_CACHE: u64 = 1 << 4;
+    const PAGE_HUGE: u64 = 1 << 7;
+
+    use x86_64::instructions::tlb::flush;
+    use x86_64::VirtAddr;
 
     // Kernel higher-half PML4 entry index. The bootloader identity-maps the
     // kernel at low addresses, but we also keep the kernel visible in every
     // process by sharing the highest PML4 entry (entry 511).
     /// Physical address of the kernel's top-level page table, captured once
     /// during early initialization.
-    static mut KERNEL_CR3: u64 = 0;
+    pub(super) static mut KERNEL_CR3: u64 = 0;
 
     /// Capture the currently active top-level page table.
     ///
@@ -42,7 +48,8 @@ mod x86_64_impl {
         pub fn new() -> Option<Self> {
             let root = frame_allocator::allocate()?;
             unsafe {
-                core::ptr::write_bytes(root as *mut u8, 0, 4096);
+                let root_virt = crate::mm::hhdm::phys_to_virt(root) as *mut u8;
+                core::ptr::write_bytes(root_virt, 0, 4096);
             }
 
             // Copy the entire kernel page table into the new top-level table.
@@ -51,8 +58,8 @@ mod x86_64_impl {
             // implementation will switch to a proper higher-half shared entry.
             if unsafe { KERNEL_CR3 } != 0 {
                 unsafe {
-                    let src = KERNEL_CR3 as *const u64;
-                    let dst = root as *mut u64;
+                    let src = crate::mm::hhdm::phys_to_virt(KERNEL_CR3) as *const u64;
+                    let dst = crate::mm::hhdm::phys_to_virt(root) as *mut u64;
                     for i in 0..512 {
                         dst.add(i).write(src.add(i).read());
                     }
@@ -82,7 +89,7 @@ mod x86_64_impl {
             let pt = Self::next_table(pd, pd_index, true);
             let Some(pt) = pt else { return false };
 
-            let entries = pt as *mut u64;
+            let entries = crate::mm::hhdm::phys_to_virt(pt) as *mut u64;
             let entry = entries.add(pt_index);
             entry.write(phys | flags | PAGE_PRESENT);
             true
@@ -100,6 +107,95 @@ mod x86_64_impl {
                 }
             }
             true
+        }
+
+        /// Map a single 4 KiB page as device memory: present, writable and
+        /// uncached.  Any existing mapping is overwritten, and any existing
+        /// huge page along the walk is split so that per-page flags can be
+        /// applied.
+        ///
+        /// # Safety
+        /// The caller must own the physical page and the virtual address must
+        /// be valid for the active address space.
+        pub unsafe fn map_device(&mut self, virt: u64, phys: u64) -> bool {
+            let pml4_index = ((virt >> 39) & 0x1FF) as usize;
+            let pdpt_index = ((virt >> 30) & 0x1FF) as usize;
+            let pd_index = ((virt >> 21) & 0x1FF) as usize;
+            let pt_index = ((virt >> 12) & 0x1FF) as usize;
+
+            let pdpt = Self::next_table(self.root, pml4_index, true);
+            let Some(pdpt) = pdpt else { return false };
+            Self::split_pdpt_huge_page(pdpt, pdpt_index);
+            let pd = Self::next_table(pdpt, pdpt_index, true);
+            let Some(pd) = pd else { return false };
+            Self::split_pd_huge_page(pd, pd_index);
+            let pt = Self::next_table(pd, pd_index, true);
+            let Some(pt) = pt else { return false };
+
+            let entries = crate::mm::hhdm::phys_to_virt(pt) as *mut u64;
+            entries.add(pt_index).write(
+                phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_NO_CACHE,
+            );
+            flush(VirtAddr::new_truncate(virt));
+            true
+        }
+
+        /// Split a 1 GiB page-table entry at `pdpt[index]` into a page
+        /// directory of 2 MiB entries, preserving the original flags.
+        ///
+        /// If the entry is already a page-directory pointer or is absent,
+        /// returns the existing child table physical address or `None`.
+        unsafe fn split_pdpt_huge_page(pdpt: u64, index: usize) -> Option<u64> {
+            let entries = crate::mm::hhdm::phys_to_virt(pdpt) as *mut u64;
+            let entry = entries.add(index).read();
+            if (entry & PAGE_PRESENT) == 0 {
+                return None;
+            }
+            if (entry & PAGE_HUGE) == 0 {
+                return Some(entry & !0xFFF);
+            }
+
+            let flags = entry & 0xFFF;
+            let base_phys = entry & !0xFFF;
+            let pd = frame_allocator::allocate()?;
+            let pd_virt = crate::mm::hhdm::phys_to_virt(pd) as *mut u64;
+            for i in 0..512 {
+                let page_phys = base_phys + (i as u64) * 0x20_0000;
+                let child_flags = (flags & !PAGE_HUGE) | PAGE_HUGE;
+                pd_virt.add(i).write(page_phys | child_flags | PAGE_PRESENT);
+            }
+            let parent_flags = (flags & !PAGE_HUGE) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+            entries.add(index).write(pd | parent_flags);
+            Some(pd)
+        }
+
+        /// Split a 2 MiB page-table entry at `pd[index]` into a page table of
+        /// 4 KiB entries, preserving the original flags.
+        ///
+        /// If the entry is already a page-table pointer or is absent, returns
+        /// the existing child table physical address or `None`.
+        unsafe fn split_pd_huge_page(pd: u64, index: usize) -> Option<u64> {
+            let entries = crate::mm::hhdm::phys_to_virt(pd) as *mut u64;
+            let entry = entries.add(index).read();
+            if (entry & PAGE_PRESENT) == 0 {
+                return None;
+            }
+            if (entry & PAGE_HUGE) == 0 {
+                return Some(entry & !0xFFF);
+            }
+
+            let flags = entry & 0xFFF;
+            let base_phys = entry & !0xFFF;
+            let pt = frame_allocator::allocate()?;
+            let pt_virt = crate::mm::hhdm::phys_to_virt(pt) as *mut u64;
+            for i in 0..512 {
+                let page_phys = base_phys + (i as u64) * 4096;
+                let child_flags = flags & !PAGE_HUGE;
+                pt_virt.add(i).write(page_phys | child_flags | PAGE_PRESENT);
+            }
+            let parent_flags = (flags & !PAGE_HUGE) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+            entries.add(index).write(pt | parent_flags);
+            Some(pt)
         }
 
         /// Return the physical address that should be loaded into CR3.
@@ -121,7 +217,7 @@ mod x86_64_impl {
             let pd = Self::next_table(pdpt, pdpt_index, false)?;
             let pt = Self::next_table(pd, pd_index, false)?;
 
-            let entries = pt as *const u64;
+            let entries = crate::mm::hhdm::phys_to_virt(pt) as *const u64;
             let entry = unsafe { entries.add(pt_index).read() };
             if (entry & PAGE_PRESENT) == 0 {
                 return None;
@@ -132,7 +228,7 @@ mod x86_64_impl {
         /// Return the physical address of the table referenced by `entry` in
         /// `table`, allocating and linking a new table if necessary.
         fn next_table(table: u64, index: usize, create: bool) -> Option<u64> {
-            let entries = table as *mut u64;
+            let entries = crate::mm::hhdm::phys_to_virt(table) as *mut u64;
             unsafe {
                 let entry = entries.add(index);
                 let value = entry.read();
@@ -143,7 +239,8 @@ mod x86_64_impl {
                     return None;
                 }
                 let frame = frame_allocator::allocate()?;
-                core::ptr::write_bytes(frame as *mut u8, 0, 4096);
+                let frame_virt = crate::mm::hhdm::phys_to_virt(frame) as *mut u8;
+                core::ptr::write_bytes(frame_virt, 0, 4096);
                 entry.write(frame | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
                 Some(frame)
             }
@@ -153,6 +250,18 @@ mod x86_64_impl {
 
 #[cfg(feature = "arch_x86_64")]
 pub use x86_64_impl::{capture_kernel_page_table, PageTable};
+
+#[cfg(feature = "arch_x86_64")]
+/// Return a handle to the kernel's captured top-level page table.
+///
+/// Returns `None` if [`capture_kernel_page_table`] has not yet been called.
+pub fn kernel_page_table() -> Option<PageTable> {
+    let root = unsafe { x86_64_impl::KERNEL_CR3 };
+    if root == 0 {
+        return None;
+    }
+    Some(PageTable { root })
+}
 
 /// Return a mutable reference to the page table rooted at physical address
 /// `cr3`. This is a debug/utility helper that treats the physical address as
@@ -212,4 +321,7 @@ impl PageTable {
 pub const PAGE_PRESENT: u64 = 1 << 0;
 pub const PAGE_WRITABLE: u64 = 1 << 1;
 pub const PAGE_USER: u64 = 1 << 2;
+pub const PAGE_WRITE_THROUGH: u64 = 1 << 3;
+pub const PAGE_NO_CACHE: u64 = 1 << 4;
+pub const PAGE_HUGE: u64 = 1 << 7;
 pub const PAGE_EXECUTE: u64 = 1 << 63; // NX bit when EFER.NXE is set.

@@ -18,7 +18,7 @@ const STACK_SIZE: usize = 32 * 1024; // 32 KiB kernel stacks
 static mut RING0_STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
 static mut DOUBLE_FAULT_STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
 
-static TSS: TaskStateSegment = TaskStateSegment::new();
+static mut TSS: TaskStateSegment = TaskStateSegment::new();
 static mut GDT: GlobalDescriptorTable = GlobalDescriptorTable::new();
 
 #[derive(Clone, Copy)]
@@ -42,21 +42,28 @@ pub fn selectors() -> Selectors {
 /// # Safety
 /// Must be called exactly once from valid x86_64 long mode.
 pub unsafe fn init() {
-    let ring0_top = core::ptr::addr_of!(RING0_STACK) as u64 + STACK_SIZE as u64;
-    let df_top = core::ptr::addr_of!(DOUBLE_FAULT_STACK) as u64 + STACK_SIZE as u64;
-    let tss_ptr = core::ptr::addr_of!(TSS) as *mut TaskStateSegment;
+    let ring0_top = core::ptr::addr_of_mut!(RING0_STACK) as u64 + STACK_SIZE as u64;
+    let df_top = core::ptr::addr_of_mut!(DOUBLE_FAULT_STACK) as u64 + STACK_SIZE as u64;
+    let tss_ptr = core::ptr::addr_of_mut!(TSS);
     unsafe {
         (*tss_ptr).privilege_stack_table[0] = x86_64::VirtAddr::new(ring0_top);
         (*tss_ptr).interrupt_stack_table[0] = x86_64::VirtAddr::new(df_top);
     }
 
-    // Order matters for SYSCALL/SYSRET: the CPU computes SS = CS + 8, so
-    // kernel code/data must be followed by user code/data.
+    crate::logln!("gdt: append kcode");
     let kernel_code = GDT.append(Descriptor::kernel_code_segment());
+    crate::logln!("gdt: append kdata");
     let kernel_data = GDT.append(Descriptor::kernel_data_segment());
+    crate::logln!("gdt: append ucode");
     let user_code = GDT.append(Descriptor::user_code_segment());
+    crate::logln!("gdt: append udata");
     let user_data = GDT.append(Descriptor::user_data_segment());
-    let tss_selector = GDT.append(Descriptor::tss_segment(&TSS));
+    crate::logln!("gdt: append tss");
+    let tss_selector = GDT.append(Descriptor::tss_segment(
+        // SAFETY: `TSS` is a static mut and no other reference is live.
+        unsafe { &TSS },
+    ));
+    crate::logln!("gdt: set selectors");
     SELECTORS = Some(Selectors {
         kernel_code,
         kernel_data,
@@ -65,8 +72,10 @@ pub unsafe fn init() {
         tss: tss_selector,
     });
 
+    crate::logln!("gdt: load");
     GDT.load();
 
+    crate::logln!("gdt: set regs");
     CS::set_reg(kernel_code);
     SS::set_reg(kernel_data);
     DS::set_reg(SegmentSelector(0));
@@ -74,6 +83,7 @@ pub unsafe fn init() {
     FS::set_reg(SegmentSelector(0));
     GS::set_reg(SegmentSelector(0));
 
+    crate::logln!("gdt: load_tss");
     load_tss(tss_selector);
 }
 
@@ -87,6 +97,5 @@ pub unsafe fn init() {
 /// `rsp` must point to valid writable memory within the current thread's
 /// kernel stack.
 pub unsafe fn set_rsp0(rsp: u64) {
-    let tss_ptr = core::ptr::addr_of!(TSS) as *mut TaskStateSegment;
-    (*tss_ptr).privilege_stack_table[0] = x86_64::VirtAddr::new(rsp);
+    (*core::ptr::addr_of_mut!(TSS)).privilege_stack_table[0] = x86_64::VirtAddr::new(rsp);
 }

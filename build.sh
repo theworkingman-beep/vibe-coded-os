@@ -12,7 +12,7 @@ case "$ARCH" in
         FEATURES="arch_x86_64"
         ;;
     aarch64)
-        TARGET="aarch64-unknown-none"
+        TARGET="aarch64-unknown-none-softfloat"
         FEATURES="arch_aarch64"
         ;;
     *)
@@ -22,28 +22,25 @@ case "$ARCH" in
 esac
 
 echo "Building Aperture OS kernel for $ARCH..."
-# The x86_64 kernel uses naked assembly that references static symbols; the
-# large code model prevents R_X86_64_32S linker relocations in that context.
 cargo build -p kernel --no-default-features --features "$FEATURES" \
     -Z build-std=core,compiler_builtins,alloc \
     -Z build-std-features=compiler-builtins-mem \
     --target "$TARGET"
 
 KERNEL_ELF="target/$TARGET/debug/kernel"
+ISO_IMAGE="target/aperture-${ARCH}.iso"
+DISK_IMAGE="target/aperture-${ARCH}-disk.img"
 
+# The installer disk image is only useful on x86_64 where an ATA driver exists.
+# On AArch64 the raw disk image adds ~100 MiB to the ISO as a Limine module
+# and can exhaust the UEFI firmware's high-memory allocator, so omit it.
 if [[ "$ARCH" == "x86_64" ]]; then
-    UEFI_IMAGE="target/aperture-uefi.img"
-    BIOS_IMAGE="target/aperture-bios.img"
-    mkdir -p target
-
-    echo "Building boot images..."
-    cargo run --manifest-path tools/bootimage/Cargo.toml -- "$KERNEL_ELF" "$UEFI_IMAGE" "$BIOS_IMAGE"
-
-    echo "UEFI image: $UEFI_IMAGE"
-    echo "BIOS image: $BIOS_IMAGE"
+    echo "Building disk image..."
+    tools/build-disk-image.sh "$ARCH" "$KERNEL_ELF" "$DISK_IMAGE"
+    echo "Building Limine boot image..."
+    tools/build-image.sh "$ARCH" "$KERNEL_ELF" "$ISO_IMAGE" "$DISK_IMAGE"
 else
-    echo "Building AArch64 boot image..."
-    ISO_IMAGE="target/aperture-aarch64.iso"
-    tools/aarch64-bootimage.sh "$KERNEL_ELF" "$ISO_IMAGE"
-    echo "AArch64 boot image: $ISO_IMAGE"
+    echo "Building Limine boot image..."
+    tools/build-image.sh "$ARCH" "$KERNEL_ELF" "$ISO_IMAGE"
 fi
+echo "Boot image: $ISO_IMAGE"

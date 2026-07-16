@@ -54,16 +54,19 @@ pub fn create_thread(
     // interpreter threads the kernel accesses the guest stack directly as a
     // physical address.
     const USER_STACK_VIRT: u64 = 0x0000_0000_0007_0000;
-    let ustack_base = crate::mm::alloc_early(USER_STACK_SIZE, 4096)? as u64;
-    let ustack_top = ustack_base + USER_STACK_SIZE as u64;
+    let ustack_base_virt = crate::mm::alloc_early(USER_STACK_SIZE, 4096)? as u64;
+    let ustack_base_phys = crate::mm::hhdm::virt_to_phys(ustack_base_virt);
+    let ustack_top = ustack_base_virt + USER_STACK_SIZE as u64;
     let user_rsp = if cr3 == 0 {
+        // Interpreter threads access the guest stack directly as physical
+        // memory, so hand back the physical top.
         ustack_top
     } else {
         if let Some(mut pt) = unsafe { page_table_root(cr3) } {
             let pages = USER_STACK_SIZE / 4096;
             let flags = PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE;
             unsafe {
-                pt.map_region(USER_STACK_VIRT, ustack_base, pages, flags);
+                pt.map_region(USER_STACK_VIRT, ustack_base_phys, pages, flags);
             }
         }
         USER_STACK_VIRT + USER_STACK_SIZE as u64
@@ -266,14 +269,6 @@ pub unsafe fn enter_user_mode(slot: usize) -> ! {
     let user_rip = t.user_rip;
     let user_rsp = t.user_rsp;
 
-    if cr3 != 0 {
-        core::arch::asm!(
-            "mov cr3, {cr3}",
-            cr3 = in(reg) cr3,
-            options(nostack, preserves_flags),
-        );
-    }
-
     let kstack_top = t.stack_base + crate::arch::context_switch::stack_size() as u64;
     crate::arch::x86_64::syscall::set_syscall_rsp(kstack_top);
     unsafe {
@@ -281,6 +276,15 @@ pub unsafe fn enter_user_mode(slot: usize) -> ! {
     }
     // The AArch64 path is already gated by #[cfg(feature = "arch_x86_64")] on
     // this function, so the above call is always valid inside it.
+
+    // Switch to the per-process page table so the user stack mapping is active.
+    if cr3 != 0 {
+        core::arch::asm!(
+            "mov cr3, {cr3}",
+            cr3 = in(reg) cr3,
+            options(nostack, preserves_flags),
+        );
+    }
 
     // Push a return address onto the user stack so that when the PE's entry
     // function returns it lands in thread_exit instead of jumping to garbage.

@@ -3,7 +3,7 @@
 //! Provides the backing store for NT file syscalls and native kernel paths.
 //! A real implementation will use a disk filesystem and page cache.
 
-use crate::mm::frame_allocator;
+use crate::mm::{frame_allocator, hhdm};
 use core::cmp::min;
 use spin::Mutex;
 
@@ -172,7 +172,7 @@ pub fn read(handle: FileHandle, buf: &mut [u8]) -> Option<usize> {
 
         let data = FILE_DATA.lock();
         if let Some(frame) = data[node][frame_index] {
-            let src = (frame + frame_offset as u64) as *const u8;
+            let src = hhdm::phys_to_virt(frame + frame_offset as u64) as *const u8;
             unsafe {
                 core::ptr::copy_nonoverlapping(src, buf[read..read + to_read].as_mut_ptr(), to_read);
             }
@@ -211,7 +211,7 @@ pub fn write(handle: FileHandle, buf: &[u8]) -> Option<usize> {
             data[node][frame_index] = frame_allocator::allocate();
         }
         let frame = data[node][frame_index].as_mut()?;
-        let dst = (*frame + frame_offset as u64) as *mut u8;
+        let dst = hhdm::phys_to_virt(*frame + frame_offset as u64) as *mut u8;
         unsafe {
             core::ptr::copy_nonoverlapping(buf[written..written + to_write].as_ptr(), dst, to_write);
         }

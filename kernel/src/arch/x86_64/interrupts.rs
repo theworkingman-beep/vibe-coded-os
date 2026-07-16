@@ -3,6 +3,7 @@
 #![allow(static_mut_refs)]
 
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
+use x86_64::instructions::interrupts;
 use x86_64::instructions::port::Port;
 
 /// Programmable Interrupt Controller constants.
@@ -31,6 +32,9 @@ static mut MOUSE_PACKET: [i8; 3] = [0; 3];
 
 /// Initialize the IDT and remap the PIC.
 pub fn init() {
+    // Disable interrupts while reprogramming the PIC and PIT so the
+    // initialization sequence is not interrupted mid-sequence.
+    interrupts::disable();
     unsafe {
         IDT.breakpoint.set_handler_fn(breakpoint_handler);
         IDT.double_fault
@@ -38,8 +42,8 @@ pub fn init() {
             .set_stack_index(1);
         IDT.page_fault.set_handler_fn(page_fault_handler);
 
-        // IRQ0: timer uses a raw handler that performs preemptive scheduling.
-        IDT[32].set_handler_addr(x86_64::VirtAddr::new(timer_interrupt_handler as *const () as u64));
+        // IRQ0: timer (standard x86-interrupt handler).
+        IDT[32].set_handler_fn(timer_interrupt_handler);
         // IRQ1: keyboard
         IDT[33].set_handler_fn(keyboard_interrupt_handler);
         // IRQ12: mouse (PIC1 entry 44 = 32 + 12)
@@ -50,18 +54,42 @@ pub fn init() {
 
     remap_pic();
     init_ps2_mouse();
+
     unsafe {
-        // Unmask timer (IRQ0), keyboard (IRQ1), and mouse (IRQ12 through PIC2).
+        super::ioapic::enable_lapic();
+        // QEMU's `pc` machine wires PIT/keyboard/mouse through the 8259 PIC
+        // rather than the I/O APIC.  Keep the PIC remapped and unmasked and
+        // route its interrupts into the local APIC via LINT0/ExtINT.
+        crate::logln!("pic: legacy PIC for timer/keyboard/mouse");
         let mut pic1_data: Port<u8> = Port::new(PIC1_DATA);
-        pic1_data.write(0xFC);
+        pic1_data.write(0xF8); // IRQ0 + IRQ1 + IRQ2 unmasked
         let mut pic2_data: Port<u8> = Port::new(PIC2_DATA);
-        pic2_data.write(0xFB);
+        pic2_data.write(0xEF); // IRQ12 unmasked
+
+        init_pit();
+    }
+    interrupts::enable();
+}
+
+/// Program the PIT channel 0 for a 1000 Hz periodic tick.
+fn init_pit() {
+    unsafe {
+        let mut command: Port<u8> = Port::new(0x43);
+        command.write(0x34); // channel 0, lobyte/hibyte, mode 2, binary
+        pic_io_delay();
+        let mut data: Port<u8> = Port::new(0x40);
+        let divisor = 1193u16; // ~1000 Hz on a 1.193182 MHz clock
+        data.write((divisor & 0xFF) as u8);
+        pic_io_delay();
+        data.write(((divisor >> 8) & 0xFF) as u8);
     }
 }
 
 /// Initialize the PS/2 mouse and enable interrupts.
 fn init_ps2_mouse() {
     unsafe {
+        wait_ps2_write();
+        Port::new(0x64).write(0xAEu8); // enable keyboard interface
         wait_ps2_write();
         Port::new(0x64).write(0xA8u8); // enable mouse auxiliary device
 
@@ -72,7 +100,12 @@ fn init_ps2_mouse() {
         wait_ps2_write();
         Port::new(0x64).write(0x60u8); // command byte write
         wait_ps2_write();
-        Port::new(0x60).write(status | 2 | 1); // enable IRQs
+        // Keep system flag, clear keyboard/mouse disable bits, enable both IRQs.
+        Port::new(0x60).write((status & !0x30) | 2 | 1);
+
+        // Enable keyboard scanning.
+        wait_ps2_write();
+        Port::new(0x60).write(0xF4u8);
 
         write_mouse_cmd(0xF6); // defaults
         write_mouse_cmd(0xF4); // enable streaming
@@ -110,6 +143,15 @@ fn write_mouse_cmd(cmd: u8) {
     }
 }
 
+/// Short I/O delay used between PIC and PIT writes.
+/// Writing to the unused POST port (0x80) gives the classic ~1us pause.
+fn pic_io_delay() {
+    unsafe {
+        let mut post: Port<u8> = Port::new(0x80);
+        post.write(0);
+    }
+}
+
 /// Remap the PIC so IRQs start at IDT entry 32.
 fn remap_pic() {
     let mut pic1_command: Port<u8> = Port::new(PIC1_COMMAND);
@@ -122,18 +164,27 @@ fn remap_pic() {
 
     unsafe {
         pic1_command.write(0x11);
+        pic_io_delay();
         pic2_command.write(0x11);
+        pic_io_delay();
 
         pic1_data.write(0x20);
+        pic_io_delay();
         pic2_data.write(0x28);
+        pic_io_delay();
 
         pic1_data.write(0x04);
+        pic_io_delay();
         pic2_data.write(0x02);
+        pic_io_delay();
 
         pic1_data.write(0x01);
+        pic_io_delay();
         pic2_data.write(0x01);
+        pic_io_delay();
 
         pic1_data.write(a1);
+        pic_io_delay();
         pic2_data.write(a2);
     }
 }
@@ -222,78 +273,15 @@ extern "x86-interrupt" fn page_fault_handler(
     crate::logln!("PAGE FAULT at {:#x}: {:#?} {:#?}", addr, error_code, stack_frame);
 }
 
-/// Naked timer interrupt handler.
+/// Timer interrupt handler.
 ///
-/// On entry the CPU has pushed RIP, CS, and RFLAGS onto the interrupt stack.
-/// If the interrupt arrived from ring 3, it also pushed RSP and SS. We check
-/// the saved CS to decide whether to preempt; kernel-mode interrupts simply
-/// acknowledge the PIC and return.
+/// Single-core bring-up only: we just acknowledge the interrupt. Preemptive
+/// scheduling will be restored once the ring-3 path is validated.
 #[cfg(feature = "arch_x86_64")]
-#[unsafe(naked)]
-unsafe extern "C" fn timer_interrupt_handler() {
-    core::arch::naked_asm!(
-        // [rsp + 0]  = saved RIP
-        // [rsp + 8]  = saved CS (CPL in low 2 bits)
-        "mov rax, [rsp + 8]",
-        "and rax, 3",
-        "cmp rax, 3",
-        "jne 2f",
-
-        // Came from ring 3: save all general-purpose registers above the
-        // CPU-pushed interrupt frame.
-        "push r15",
-        "push r14",
-        "push r13",
-        "push r12",
-        "push r11",
-        "push r10",
-        "push r9",
-        "push r8",
-        "push rbp",
-        "push rdi",
-        "push rsi",
-        "push rbx",
-        "push rdx",
-        "push rcx",
-        "push rax",
-
-        // RSP now points to the saved register frame. Ask the scheduler to
-        // pick the next thread and return its interrupt frame pointer.
-        "mov rdi, rsp",
-        "call {preempt}",
-        "mov rsp, rax",
-
-        // Restore the new thread's general-purpose registers.
-        "pop rax",
-        "pop rcx",
-        "pop rdx",
-        "pop rbx",
-        "pop rsi",
-        "pop rdi",
-        "pop rbp",
-        "pop r8",
-        "pop r9",
-        "pop r10",
-        "pop r11",
-        "pop r12",
-        "pop r13",
-        "pop r14",
-        "pop r15",
-
-        // Acknowledge the PIC and return to the selected thread.
-        "mov al, {eoi}",
-        "out {pic1_command}, al",
-        "iretq",
-
-        "2:",
-        "mov al, {eoi}",
-        "out {pic1_command}, al",
-        "iretq",
-
-        preempt = sym crate::win32::scheduler::preempt,
-        eoi = const PIC_EOI,
-        pic1_command = const PIC1_COMMAND,
-    );
+extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    unsafe {
+        super::ioapic::eoi();
+    }
 }
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
@@ -305,8 +293,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
             KEYBOARD_BUF[KEYBOARD_TAIL] = scancode;
             KEYBOARD_TAIL = next;
         }
-        let mut pic1_command: Port<u8> = Port::new(PIC1_COMMAND);
-        pic1_command.write(PIC_EOI);
+        super::ioapic::eoi();
     }
 }
 
@@ -317,10 +304,7 @@ extern "x86-interrupt" fn mouse_interrupt_handler(_stack_frame: InterruptStackFr
 
         // Wait for the packet start bit (bit 3 set in the first byte).
         if MOUSE_CYCLE == 0 && (byte & 0x08) == 0 {
-            let mut pic1_command: Port<u8> = Port::new(PIC1_COMMAND);
-            pic1_command.write(PIC_EOI);
-            let mut pic2_command: Port<u8> = Port::new(PIC2_COMMAND);
-            pic2_command.write(PIC_EOI);
+            super::ioapic::eoi();
             return;
         }
 
@@ -337,10 +321,7 @@ extern "x86-interrupt" fn mouse_interrupt_handler(_stack_frame: InterruptStackFr
             MOUSE_BTN = MOUSE_PACKET[0] as u8 & 0x07;
         }
 
-        let mut pic1_command: Port<u8> = Port::new(PIC1_COMMAND);
-        pic1_command.write(PIC_EOI);
-        let mut pic2_command: Port<u8> = Port::new(PIC2_COMMAND);
-        pic2_command.write(PIC_EOI);
+        super::ioapic::eoi();
     }
 }
 

@@ -38,6 +38,7 @@ pub fn init() {
 /// Must be called after the physical frame allocator and early heap have been
 /// initialized.
 pub fn self_test() {
+    crate::logln!("win32: self_test start");
     // Ensure /bin/test.exe exists and contains the minimal PE fixture.
     let bin = crate::vfs::lookup("/bin").unwrap_or_else(|| {
         crate::vfs::create(crate::vfs::NodeId(0), "bin", crate::vfs::NodeKind::Directory)
@@ -50,6 +51,7 @@ pub fn self_test() {
     assert_eq!(written, loader::MINIMAL_PE64.len());
     crate::vfs::close(file);
 
+    crate::logln!("win32: vfs fixture written");
     let Some((handle, needs_translation)) = nt::create_user_process("/bin/test.exe") else {
         crate::logln!("win32: NtCreateUserProcess self-test FAILED.");
         return;
@@ -71,6 +73,7 @@ pub fn self_test() {
         needs_translation
     );
 
+    crate::logln!("win32: about to create thread");
     let slot = scheduler::create_thread(proc.pid, proc.entry_point, proc.page_table_root)
         .expect("create initial thread for loaded process");
     let thread = scheduler::thread(slot).expect("scheduled thread");

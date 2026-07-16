@@ -16,6 +16,11 @@ use core::ptr;
 /// 0x2000 bytes.
 pub static MINIMAL_PE64: &[u8] = include_bytes!("minimal_pe64.bin");
 
+/// Translate a physical frame address to a writable HHDM pointer.
+fn phys_ptr(phys: u64) -> *mut u8 {
+    crate::mm::hhdm::phys_to_virt(phys) as *mut u8
+}
+
 /// Load a parsed PE image into a process address space.
 pub fn load_into_process(image: &PeImage, process: &mut Process, data: &[u8]) -> bool {
     let total_pages = (image.image_size as usize + 4095) / 4096;
@@ -31,9 +36,10 @@ pub fn load_into_process(image: &PeImage, process: &mut Process, data: &[u8]) ->
     // table is not yet activated; this just establishes the data structure.
     let mut page_table = PageTable::new();
 
-    // Zero the allocated region before copying sections.
+    // Zero the allocated region before copying sections. Physical memory is
+    // only accessible through the HHDM, so translate the base address first.
     unsafe {
-        ptr::write_bytes(base as *mut u8, 0, total_pages * 4096);
+        ptr::write_bytes(phys_ptr(base), 0, total_pages * 4096);
     }
 
     // Copy each section from raw file offset to its virtual address.
@@ -53,9 +59,9 @@ pub fn load_into_process(image: &PeImage, process: &mut Process, data: &[u8]) ->
 
     process.page_table_root = page_table.map(|pt| pt.cr3()).unwrap_or(0);
 
-    // Record the absolute entry point inside the mapped image.
+    // Record the absolute virtual entry point inside the mapped image.
     let entry_rva = image.entry_point.saturating_sub(image.image_base);
-    process.entry_point = base + entry_rva;
+    process.entry_point = image.image_base + entry_rva;
 
     true
 }
@@ -78,7 +84,7 @@ fn map_section(
         unsafe {
             ptr::copy_nonoverlapping(
                 data.as_ptr().add(src_offset),
-                dest as *mut u8,
+                phys_ptr(dest),
                 copy_size,
             );
         }
@@ -87,15 +93,17 @@ fn map_section(
     // Zero the remainder (BSS-style uninitialized data).
     if copy_size < virtual_size {
         unsafe {
-            ptr::write_bytes((dest + copy_size as u64) as *mut u8, 0, virtual_size - copy_size);
+            ptr::write_bytes(phys_ptr(dest + copy_size as u64), 0, virtual_size - copy_size);
         }
     }
 
     // Map the section into the per-process page table if one exists.
+    // Note: no NX bit (bit 63) is set here; Limine has not enabled EFER.NXE,
+    // and setting bit 63 would be interpreted as a reserved/protection fault.
     if let Some(pt) = page_table {
         let section_virt = virt_base + section.virtual_address as u64;
         let section_phys = phys_base + section.virtual_address as u64;
-        let flags = PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE | PAGE_EXECUTE;
+        let flags = PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE;
         unsafe {
             pt.map(section_virt, section_phys, flags);
         }

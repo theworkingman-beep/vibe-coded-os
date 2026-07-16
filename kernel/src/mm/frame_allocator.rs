@@ -16,6 +16,8 @@ pub struct FrameAllocator {
     first_frame: u64,
     frame_count: usize,
     bitmap: *mut AtomicU64,
+    bitmap_phys: u64,
+    bitmap_bytes: usize,
     bitmap_words: usize,
 }
 
@@ -28,6 +30,8 @@ impl FrameAllocator {
             first_frame: 0,
             frame_count: 0,
             bitmap: core::ptr::null_mut(),
+            bitmap_phys: 0,
+            bitmap_bytes: 0,
             bitmap_words: 0,
         }
     }
@@ -47,8 +51,10 @@ impl FrameAllocator {
         let bitmap_bytes = bitmap_words * core::mem::size_of::<AtomicU64>();
         let bitmap_addr = align_up(first_frame, core::mem::align_of::<AtomicU64>() as u64);
 
-        // Place bitmap in physical memory and zero it.
-        let bitmap = bitmap_addr as *mut AtomicU64;
+        // Place the bitmap in physical memory and zero it. Physical memory is
+        // only accessible through the HHDM, so translate the address before
+        // dereferencing it as a pointer.
+        let bitmap = crate::mm::hhdm::phys_to_virt(bitmap_addr) as *mut AtomicU64;
         for i in 0..bitmap_words {
             core::ptr::write(bitmap.add(i), AtomicU64::new(0));
         }
@@ -56,6 +62,8 @@ impl FrameAllocator {
         self.first_frame = first_frame;
         self.frame_count = frame_count;
         self.bitmap = bitmap;
+        self.bitmap_phys = bitmap_addr;
+        self.bitmap_bytes = bitmap_bytes;
         self.bitmap_words = bitmap_words;
 
         // Mark all frames as allocated initially.
@@ -88,10 +96,9 @@ impl FrameAllocator {
     }
 
     fn is_bitmap_frame(&self, index: usize) -> bool {
-        let bitmap_addr = self.bitmap as u64;
         let frame_addr = self.first_frame + index as u64 * FRAME_SIZE;
-        frame_addr >= bitmap_addr
-            && frame_addr < bitmap_addr + (self.bitmap_words * core::mem::size_of::<AtomicU64>()) as u64
+        frame_addr >= self.bitmap_phys
+            && frame_addr < self.bitmap_phys + self.bitmap_bytes as u64
     }
 
     fn mark(&self, index: usize, used: bool) {

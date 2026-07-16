@@ -5,9 +5,11 @@
 //! the bump allocator once the MMU is configured per-architecture.
 
 pub mod frame_allocator;
+pub mod hhdm;
 pub mod page_table;
 
 use crate::boot_info::{MemoryRegion, MemoryRegionKind};
+use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
 
@@ -75,6 +77,26 @@ pub fn count_usable_frames(regions: &[MemoryRegion]) -> usize {
 pub fn total_frames() -> usize {
     TOTAL_FRAMES.load(Ordering::Relaxed)
 }
+
+/// Global allocator backed by the early bump heap.
+///
+/// Deallocation is a no-op; the early heap is leaked.  This is sufficient
+/// for the kernel's limited dynamic allocation (installer UI strings, etc.).
+pub struct GlobalAllocator;
+
+unsafe impl GlobalAlloc for GlobalAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        alloc_early(layout.size(), layout.align()).unwrap_or(core::ptr::null_mut())
+    }
+
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
+        // Bump allocator does not support freeing individual allocations.
+    }
+}
+
+/// The global Rust allocator used by `alloc` types such as `String`/`Vec`.
+#[global_allocator]
+static GLOBAL_ALLOCATOR: GlobalAllocator = GlobalAllocator;
 
 /// Initialize physical frame allocation from the bootloader memory map.
 ///
