@@ -3,6 +3,7 @@
 pub mod context_switch;
 pub mod gdt;
 pub mod interrupts;
+pub mod vectors;
 
 /// QEMU "virt" machine PL011 UART base physical address.
 const PL011_BASE_PHYS: usize = 0x0900_0000;
@@ -15,6 +16,13 @@ pub fn init() {
     // The PL011 UART on the QEMU virt machine is usable without explicit
     // baud/divisor configuration; the firmware already set it up. Real
     // hardware bring-up will configure GIC, timers, and the MMU here.
+    unsafe {
+        vectors::init();
+        // Keep IRQs masked for now; the GIC/timer bring-up is still being
+        // debugged on real hardware and the current build does not need
+        // preemptive interrupts for the installer/GUI tests.
+        // core::arch::asm!("msr daifclr, #0x3", options(nomem, nostack));
+    }
 }
 
 /// Output a single byte via QEMU semihosting for early bring-up.

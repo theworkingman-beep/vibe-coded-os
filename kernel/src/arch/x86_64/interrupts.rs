@@ -275,8 +275,9 @@ extern "x86-interrupt" fn page_fault_handler(
 
 /// Timer interrupt handler.
 ///
-/// Single-core bring-up only: we just acknowledge the interrupt. Preemptive
-/// scheduling will be restored once the ring-3 path is validated.
+/// For now this just acknowledges the interrupt; the full preemptive context
+/// switch from a naked handler needs additional validation and is being staged
+/// for a follow-up change.
 #[cfg(feature = "arch_x86_64")]
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     unsafe {
