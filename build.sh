@@ -4,7 +4,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-ARCH="${ARCH:-x86_64}"
+# Accept architecture as an argument or via the ARCH environment variable.
+ARCH="${1:-${ARCH:-x86_64}}"
 
 case "$ARCH" in
     x86_64)

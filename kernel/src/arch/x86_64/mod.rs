@@ -3,6 +3,7 @@
 use uart_16550::SerialPort;
 use x86_64::instructions::port::Port;
 
+pub mod acpi;
 pub mod context_switch;
 pub mod gdt;
 pub mod interrupts;

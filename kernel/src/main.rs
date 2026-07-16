@@ -13,7 +13,7 @@
 extern crate alloc;
 
 use limine::{
-    request::{EntryPointRequest, FramebufferRequest, HhdmRequest, MemmapRequest, ModulesRequest, PagingModeRequest, StackSizeRequest},
+    request::{EntryPointRequest, FramebufferRequest, HhdmRequest, MemmapRequest, ModulesRequest, PagingModeRequest, RsdpRequest, StackSizeRequest},
     paging::PagingMode,
     BaseRevision, RequestsEndMarker, RequestsStartMarker,
 };
@@ -62,6 +62,10 @@ static ENTRY_POINT_REQUEST: EntryPointRequest = EntryPointRequest::new(_start);
 #[used]
 #[link_section = ".requests"]
 static MODULES_REQUEST: ModulesRequest = ModulesRequest::new();
+
+#[used]
+#[link_section = ".requests"]
+static RSDP_REQUEST: RsdpRequest = RsdpRequest::new();
 
 // --- Entry point ------------------------------------------------------------
 
@@ -121,6 +125,17 @@ extern "C" fn _start() -> ! {
         if cfg!(feature = "arch_x86_64") { "x86_64" } else { "AArch64" });
     kernel::logln!("HHDM offset: {:#x}", hhdm);
 
+    if let Some(rsdp) = RSDP_REQUEST.response() {
+        let rsdp_addr = rsdp.address as usize as u64;
+        kernel::logln!("RSDP at {:#x}", rsdp_addr);
+        #[cfg(feature = "arch_x86_64")]
+        unsafe {
+            kernel::arch::acpi::init(rsdp_addr);
+        }
+    } else {
+        kernel::logln!("No RSDP provided by bootloader.");
+    }
+
     if let Some(region) = usable {
         // The bump heap dereferences its pointers directly, so hand it virtual
         // (HHDM) addresses rather than physical ones.
@@ -169,6 +184,9 @@ extern "C" fn _start() -> ! {
             let buffer = unsafe {
                 core::slice::from_raw_parts_mut(fb_addr as *mut u8, len)
             };
+            unsafe {
+                kernel::panic::register_framebuffer(buffer.as_mut_ptr(), len, info);
+            }
             kernel::gui::init_compositor(buffer, info);
             kernel::gui::desktop::init(info.width as i32, info.height as i32);
             kernel::gui::render();

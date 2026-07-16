@@ -6,6 +6,7 @@
 
 use super::color::Color;
 use super::compositor::Window;
+use crate::boot_info::{FrameBufferInfo, PixelFormat};
 
 const GLYPH_WIDTH: i32 = 5;
 const GLYPH_HEIGHT: i32 = 7;
@@ -95,5 +96,68 @@ pub fn draw_text(window: &mut Window, text: &str, x: i32, y: i32, color: Color) 
             }
         }
         cursor_x += GLYPH_WIDTH + 1;
+    }
+}
+
+/// Encode a `Color` for the framebuffer's native byte layout.
+fn encode_color(info: &FrameBufferInfo, color: Color) -> [u8; 4] {
+    match info.pixel_format {
+        PixelFormat::Rgb => [color.r, color.g, color.b, 0],
+        PixelFormat::Bgr => [color.b, color.g, color.r, 0],
+        PixelFormat::U8 => [color.r, 0, 0, 0],
+        PixelFormat::Unknown {
+            red_position,
+            green_position,
+            blue_position,
+        } => {
+            let mut pixel = [0u8; 4];
+            pixel[(red_position as usize / 8).min(3)] = color.r;
+            pixel[(green_position as usize / 8).min(3)] = color.g;
+            pixel[(blue_position as usize / 8).min(3)] = color.b;
+            pixel
+        }
+    }
+}
+
+/// Draw `text` directly onto the physical framebuffer at `(x, y)` in `color`.
+///
+/// This is intended for emergency diagnostic output (e.g. the panic handler)
+/// when a full compositor/window stack may not be available.
+pub unsafe fn draw_text_framebuffer(
+    buffer: &mut [u8],
+    info: FrameBufferInfo,
+    text: &str,
+    mut x: i32,
+    y: i32,
+    color: Color,
+) {
+    let bytes_per_pixel = info.bytes_per_pixel as usize;
+    let stride = info.stride;
+    let encoded = encode_color(&info, color);
+
+    for c in text.chars() {
+        if x + GLYPH_WIDTH > info.width as i32 {
+            break;
+        }
+        let rows = glyph_for(c);
+        for row in 0..GLYPH_HEIGHT {
+            let row_bits = rows[row as usize];
+            let py = y + row;
+            if py < 0 || py >= info.height as i32 {
+                continue;
+            }
+            for col in 0..GLYPH_WIDTH {
+                if (row_bits >> (GLYPH_WIDTH - 1 - col)) & 1 != 0 {
+                    let px = x + col;
+                    if px < 0 || px >= info.width as i32 {
+                        continue;
+                    }
+                    let offset = (py as usize * stride) + (px as usize * bytes_per_pixel);
+                    buffer[offset..offset + bytes_per_pixel]
+                        .copy_from_slice(&encoded[..bytes_per_pixel]);
+                }
+            }
+        }
+        x += GLYPH_WIDTH + 1;
     }
 }
