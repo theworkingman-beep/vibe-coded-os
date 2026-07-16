@@ -18,6 +18,7 @@ pub mod fs;
 pub mod loader;
 pub mod nt;
 pub mod objects;
+pub mod port;
 pub mod process;
 pub mod registry;
 pub mod scheduler;
