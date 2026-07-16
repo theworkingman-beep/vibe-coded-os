@@ -3,8 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-UEFI_IMAGE="target/aperture-uefi.img"
-BIOS_IMAGE="target/aperture-bios.img"
+ISO_IMAGE="target/aperture-x86_64.iso"
 
 if command -v qemu-system-x86_64 >/dev/null 2>&1; then
     QEMU="qemu-system-x86_64"
@@ -15,16 +14,11 @@ else
     exit 1
 fi
 
-if [[ -f "$UEFI_IMAGE" ]]; then
-    echo "Running UEFI image: $UEFI_IMAGE"
-    $QEMU -drive "format=raw,file=$UEFI_IMAGE" -serial stdio -m 256M
-elif [[ -f "$BIOS_IMAGE" ]]; then
-    echo "Running BIOS image: $BIOS_IMAGE"
-    $QEMU -drive "format=raw,file=$BIOS_IMAGE" -serial stdio -m 256M
-else
-    echo "No bootable disk image found."
-    echo "Looked for:"
-    echo "  $UEFI_IMAGE"
-    echo "  $BIOS_IMAGE"
+if [[ ! -f "$ISO_IMAGE" ]]; then
+    echo "No bootable ISO found: $ISO_IMAGE"
+    echo "Run ./build.sh x86_64 first."
     exit 1
 fi
+
+echo "Running ISO: $ISO_IMAGE"
+$QEMU -cdrom "$ISO_IMAGE" -boot d -serial stdio -m 256M
