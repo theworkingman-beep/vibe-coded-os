@@ -18,3 +18,6 @@ tools/__pycache__/
 
 # Bootloader build cache
 tools/limine-cache/
+
+# Raw disk images are no longer produced; ignore any stragglers.
+*.img
