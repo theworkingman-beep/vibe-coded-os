@@ -43,8 +43,8 @@ pub fn init() {
         IDT.general_protection_fault.set_handler_fn(general_protection_handler);
         IDT.page_fault.set_handler_fn(page_fault_handler);
 
-        // IRQ0: timer (standard x86-interrupt handler).
-        IDT[32].set_handler_fn(timer_interrupt_handler);
+        // IRQ0: timer (naked preemptive context-switch handler).
+        IDT[32].set_handler_addr(x86_64::VirtAddr::new(timer_interrupt_naked as *const () as u64));
         // IRQ1: keyboard
         IDT[33].set_handler_fn(keyboard_interrupt_handler);
         // IRQ12: mouse (PIC1 entry 44 = 32 + 12)
@@ -286,16 +286,67 @@ extern "x86-interrupt" fn page_fault_handler(
     crate::logln!("PAGE FAULT at {:#x}: {:#?} {:#?}", addr, error_code, stack_frame);
 }
 
-/// Timer interrupt handler.
+/// Naked timer interrupt handler that performs preemptive context switching.
 ///
-/// For now this just acknowledges the interrupt; the full preemptive context
-/// switch from a naked handler needs additional validation and is being staged
-/// for a follow-up change.
+/// On entry the CPU has already pushed SS, RSP, RFLAGS, CS, and RIP.  We save
+/// the remaining general-purpose registers below that frame, send an EOI,
+/// request the scheduler to pick the next runnable thread, restore the next
+/// thread's registers from its saved interrupt frame, and `iretq` to it.
 #[cfg(feature = "arch_x86_64")]
-extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    unsafe {
-        super::ioapic::eoi();
-    }
+#[unsafe(naked)]
+unsafe extern "C" fn timer_interrupt_naked() {
+    core::arch::naked_asm!(
+        "push rax",
+        "push rbx",
+        "push rcx",
+        "push rdx",
+        "push rsi",
+        "push rdi",
+        "push rbp",
+        "push r8",
+        "push r9",
+        "push r10",
+        "push r11",
+        "push r12",
+        "push r13",
+        "push r14",
+        "push r15",
+        // The saved CS is one qword above the general-purpose register block.
+        // If the interrupted context was in ring 0 (CPL=0), the CPU did not
+        // push SS/RSP, so we cannot safely context-switch from here; just EOI
+        // and return.  Real preemption only happens from ring 3.
+        "test byte ptr [rsp + 16*8], 0x3",
+        "jnz 2f",
+        "call {eoi}",
+        "jmp 3f",
+        "2:",
+        // The saved register block is directly beneath the CPU-pushed
+        // interrupt frame; pass its top to the scheduler.
+        "mov rdi, rsp",
+        "call {eoi}",
+        "call {preempt}",
+        // `preempt` returns the next thread's saved stack pointer in RAX.
+        "mov rsp, rax",
+        "3:",
+        "pop r15",
+        "pop r14",
+        "pop r13",
+        "pop r12",
+        "pop r11",
+        "pop r10",
+        "pop r9",
+        "pop r8",
+        "pop rbp",
+        "pop rdi",
+        "pop rsi",
+        "pop rdx",
+        "pop rcx",
+        "pop rbx",
+        "pop rax",
+        "iretq",
+        eoi = sym super::ioapic::eoi,
+        preempt = sym crate::win32::scheduler::preempt,
+    );
 }
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
