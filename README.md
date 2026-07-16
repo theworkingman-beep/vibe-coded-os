@@ -43,7 +43,7 @@ Build the x86_64 kernel and bootable disk images:
 ./build.sh x86_64
 ```
 
-Build the AArch64 kernel ELF (boot image generation not yet implemented):
+Build the AArch64 bootable ISO:
 
 ```bash
 ARCH=aarch64 ./build.sh
