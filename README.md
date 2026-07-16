@@ -37,7 +37,7 @@ rustup target add x86_64-unknown-none --toolchain nightly
 rustup target add aarch64-unknown-none --toolchain nightly
 ```
 
-Build the x86_64 kernel and bootable disk images:
+Build the x86_64 bootable ISO:
 
 ```bash
 ./build.sh x86_64
