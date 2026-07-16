@@ -277,13 +277,17 @@ pub unsafe fn enter_user_mode(slot: usize) -> ! {
     // The AArch64 path is already gated by #[cfg(feature = "arch_x86_64")] on
     // this function, so the above call is always valid inside it.
 
-    // Switch to the per-process page table so the user stack mapping is active.
+    // Switch to the per-process page table first.  The process page table
+    // copies the kernel mapping, so kernel code/data remain accessible, and the
+    // user stack now has a valid mapping we can write to.
     if cr3 != 0 {
-        core::arch::asm!(
-            "mov cr3, {cr3}",
-            cr3 = in(reg) cr3,
-            options(nostack, preserves_flags),
-        );
+        unsafe {
+            core::arch::asm!(
+                "mov cr3, {cr3}",
+                cr3 = in(reg) cr3,
+                options(nostack, preserves_flags),
+            );
+        }
     }
 
     // Push a return address onto the user stack so that when the PE's entry

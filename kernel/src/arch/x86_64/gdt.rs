@@ -25,6 +25,7 @@ static mut GDT: GlobalDescriptorTable = GlobalDescriptorTable::new();
 pub struct Selectors {
     pub kernel_code: SegmentSelector,
     pub kernel_data: SegmentSelector,
+    pub user_code_32: SegmentSelector,
     pub user_code: SegmentSelector,
     pub user_data: SegmentSelector,
     pub tss: SegmentSelector,
@@ -54,10 +55,15 @@ pub unsafe fn init() {
     let kernel_code = GDT.append(Descriptor::kernel_code_segment());
     crate::logln!("gdt: append kdata");
     let kernel_data = GDT.append(Descriptor::kernel_data_segment());
-    crate::logln!("gdt: append ucode");
-    let user_code = GDT.append(Descriptor::user_code_segment());
+    // SYSRET64 computes the user CS as STAR[63:48]+16 and SS as +8.  Lay out
+    // the user segments so that a 32-bit code descriptor at index 3 gives
+    // user_data at index 4 (+8) and user_code at index 5 (+16).
+    crate::logln!("gdt: append ucode32");
+    let user_code_32 = GDT.append(Descriptor::user_code_segment());
     crate::logln!("gdt: append udata");
     let user_data = GDT.append(Descriptor::user_data_segment());
+    crate::logln!("gdt: append ucode");
+    let user_code = GDT.append(Descriptor::user_code_segment());
     crate::logln!("gdt: append tss");
     let tss_selector = GDT.append(Descriptor::tss_segment(
         // SAFETY: `TSS` is a static mut and no other reference is live.
@@ -67,6 +73,7 @@ pub unsafe fn init() {
     SELECTORS = Some(Selectors {
         kernel_code,
         kernel_data,
+        user_code_32,
         user_code,
         user_data,
         tss: tss_selector,

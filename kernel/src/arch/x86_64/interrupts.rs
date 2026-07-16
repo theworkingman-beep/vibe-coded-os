@@ -40,6 +40,7 @@ pub fn init() {
         IDT.double_fault
             .set_handler_fn(double_fault_handler)
             .set_stack_index(1);
+        IDT.general_protection_fault.set_handler_fn(general_protection_handler);
         IDT.page_fault.set_handler_fn(page_fault_handler);
 
         // IRQ0: timer (standard x86-interrupt handler).
@@ -261,6 +262,18 @@ extern "x86-interrupt" fn double_fault_handler(
     _error_code: u64,
 ) -> ! {
     crate::logln!("DOUBLE FAULT: {:#?}", stack_frame);
+    crate::hlt();
+}
+
+extern "x86-interrupt" fn general_protection_handler(
+    stack_frame: InterruptStackFrame,
+    error_code: u64,
+) {
+    crate::logln!(
+        "GENERAL PROTECTION FAULT at {:#x} error={:#x}",
+        stack_frame.instruction_pointer,
+        error_code
+    );
     crate::hlt();
 }
 
