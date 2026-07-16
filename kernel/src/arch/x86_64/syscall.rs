@@ -77,8 +77,9 @@ pub unsafe extern "C" fn syscall_entry() {
         "mov r12, rsp",
         // Switch to the kernel SYSCALL stack. The address of SYSCALL_RSP is a
         // static in the kernel image; load it with a RIP-relative LEA and then
-        // read the stored value.
-        "lea r13, [rip + {syscall_rsp} - 7]",
+        // read the stored value.  RIP-relative addressing automatically uses
+        // the address of the next instruction, so no manual offset is needed.
+        "lea r13, [rip + {syscall_rsp}]",
         "mov rsp, [r13]",
         "push rbp",
         "push rbx",

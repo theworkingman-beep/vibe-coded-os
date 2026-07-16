@@ -226,7 +226,10 @@ fn handle_allocate_virtual_memory(args: [usize; 16]) -> NtStatus {
         Ok(base) => {
             let base_ptr = args[1] as *mut u64;
             if !base_ptr.is_null() {
-                unsafe { base_ptr.write(base); }
+                // The synthetic test fixture places the output variable at an
+                // unaligned address; use unaligned write to tolerate it while
+                // still validating the ring-3 syscall round trip.
+                unsafe { base_ptr.write_unaligned(base); }
             }
             NtStatus::Success
         }
