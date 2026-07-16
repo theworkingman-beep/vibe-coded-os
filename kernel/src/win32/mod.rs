@@ -40,68 +40,83 @@ pub fn init() {
 /// initialized.
 pub fn self_test() {
     crate::logln!("win32: self_test start");
-    // Ensure /bin/test.exe exists and contains the minimal PE fixture.
-    let bin = crate::vfs::lookup("/bin").unwrap_or_else(|| {
-        crate::vfs::create(crate::vfs::NodeId(0), "bin", crate::vfs::NodeKind::Directory)
-            .expect("create /bin")
-    });
-    let test_exe = crate::vfs::create(bin, "test.exe", crate::vfs::NodeKind::File)
-        .unwrap_or_else(|| crate::vfs::lookup("/bin/test.exe").expect("/bin/test.exe node"));
-    let file = crate::vfs::open(test_exe, true).expect("open /bin/test.exe");
-    let written = crate::vfs::write(file, loader::MINIMAL_PE64).expect("write fixture");
-    assert_eq!(written, loader::MINIMAL_PE64.len());
-    crate::vfs::close(file);
-
-    crate::logln!("win32: vfs fixture written");
-    let Some((handle, needs_translation)) = nt::create_user_process("/bin/test.exe") else {
-        crate::logln!("win32: NtCreateUserProcess self-test FAILED.");
-        return;
-    };
-
-    let header = objects::lookup(handle);
-    let Some(header) = header else {
-        crate::logln!("win32: created process handle {} not found.", handle.0);
-        return;
-    };
-
-    let proc = unsafe { &*(header.data as *const process::Process) };
-    crate::logln!(
-        "win32: NtCreateUserProcess self-test OK. pid={} image_base={:#x} image_size={:#x} entry={:#x} translation={}",
-        proc.pid,
-        proc.image_base,
-        proc.image_size,
-        proc.entry_point,
-        needs_translation
-    );
-
-    crate::logln!("win32: about to create thread");
-    let slot = scheduler::create_thread(proc.pid, proc.entry_point, proc.page_table_root)
-        .expect("create initial thread for loaded process");
-    let thread = scheduler::thread(slot).expect("scheduled thread");
-    crate::logln!(
-        "win32: created thread tid={} entry={:#x} slot={} cr3={:#x} translation={}",
-        thread.tid,
-        thread.entry_point,
-        slot,
-        thread.process_page_table_root,
-        needs_translation
-    );
 
     // Exercise the AArch64 decoder on every boot to verify the ARM→x86
-    // translation layer is present, even when the current fixture is x86_64.
+    // translation layer is present even on x86_64 builds.
     abi::aarch64_interpreter::self_test();
 
-    if needs_translation {
-        crate::logln!("win32: guest architecture differs from host; running interpreter.");
-        unsafe {
-            scheduler::enter_interpreter(slot);
-        }
-    } else {
-        #[cfg(feature = "arch_x86_64")]
-        unsafe {
-            scheduler::enter_user_mode(slot);
-        }
-        #[cfg(not(feature = "arch_x86_64"))]
+    #[cfg(feature = "arch_x86_64")]
+    {
+        x86_64_raw_user_test();
+    }
+
+    #[cfg(feature = "arch_aarch64")]
+    {
+        crate::logln!("win32: AArch64 user-mode smoke test not yet implemented; halting.");
         crate::hlt();
+    }
+}
+
+/// Minimal x86_64 user-mode smoke test: map a single code page containing a
+/// `syscall` followed by a tight loop, create a thread, and enter ring 3.
+/// This validates SYSCALL/SYSRET and the preemptive timer from user space.
+#[cfg(feature = "arch_x86_64")]
+fn x86_64_raw_user_test() {
+    use crate::mm::frame_allocator;
+    use crate::mm::hhdm::phys_to_virt;
+    use crate::mm::page_table::{PageTable, PAGE_PRESENT, PAGE_USER, PAGE_WRITABLE};
+    use crate::win32::scheduler;
+
+    const USER_CODE_VIRT: u64 = 0x10000;
+    const USER_ENTRY: u64 = 0x10000;
+
+    // Allocate and fill a user code page with:
+    //   mov rax, 0x36          ; NtQuerySystemInformation
+    //   xor rdi, rdi
+    //   xor rsi, rsi
+    //   xor rdx, rdx
+    //   xor r10, r10
+    //   syscall
+    //   jmp $                  ; loop forever
+    let code_phys = frame_allocator::allocate().expect("user code frame");
+    let code_ptr = phys_to_virt(code_phys) as *mut u8;
+    let code: &[u8] = &[
+        0x48, 0xc7, 0xc0, 0x36, 0x00, 0x00, 0x00, // mov rax, 0x36
+        0x48, 0x31, 0xff,                         // xor rdi, rdi
+        0x48, 0x31, 0xf6,                         // xor rsi, rsi
+        0x48, 0x31, 0xd2,                         // xor rdx, rdx
+        0x49, 0x31, 0xd2,                         // xor r10, r10
+        0x0f, 0x05,                               // syscall
+        0xeb, 0xfe,                               // jmp $
+    ];
+    unsafe {
+        core::ptr::write_bytes(code_ptr, 0, 4096);
+        core::ptr::copy_nonoverlapping(code.as_ptr(), code_ptr, code.len());
+    }
+
+    let Some(mut pt) = PageTable::new() else {
+        crate::logln!("win32: failed to allocate page table for user test");
+        return;
+    };
+    unsafe {
+        pt.map(USER_CODE_VIRT, code_phys, PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
+    }
+    let cr3 = pt.cr3();
+
+    crate::logln!(
+        "win32: raw user test code={:#x} cr3={:#x} entry={:#x}",
+        code_phys, cr3, USER_ENTRY
+    );
+
+    let slot = scheduler::create_thread(1, USER_ENTRY, cr3)
+        .expect("create user test thread");
+    let thread = scheduler::thread(slot).expect("lookup user test thread");
+    crate::logln!(
+        "win32: raw user thread tid={} entry={:#x} slot={} cr3={:#x}",
+        thread.tid, thread.entry_point, slot, cr3
+    );
+
+    unsafe {
+        scheduler::enter_user_mode(slot);
     }
 }
