@@ -3,18 +3,15 @@ set -euo pipefail
 
 # Build a bootable Limine ISO for Aperture OS.
 #
-# Usage: build-image.sh <arch> <kernel-elf> <output-iso> [<disk-image>]
+# Usage: build-image.sh <arch> <kernel-elf> <output-iso>
 #   arch: x86_64 | aarch64
 #
 # x86_64  -> hybrid BIOS + UEFI El Torito ISO
 # aarch64 -> UEFI-only El Torito ISO
-# If <disk-image> is provided it is added to /boot/aperture-disk.img on the ISO
-# so the live installer can write it to a target disk.
 
 ARCH="${1:?arch required (x86_64 | aarch64)}"
 KERNEL_ELF="${2:?kernel elf path required}"
 OUTPUT_ISO="${3:?output iso path required}"
-DISK_IMAGE="${4:-}"
 LIMINE_VERSION="12.3.3"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -69,14 +66,6 @@ cp "$LIMINE_DIR/limine-bios.sys" "$STAGE/limine-bios.sys"
 cp "$LIMINE_DIR/limine-bios-cd.bin" "$STAGE/limine-bios-cd.bin"
 cp "$LIMINE_DIR/limine-uefi-cd.bin" "$STAGE/limine-uefi-cd.bin"
 cp "$LIMINE_DIR/$EFI_BOOT_FILE" "$STAGE/EFI/BOOT/"
-
-# If a disk image was built, add it to the ISO as a Limine boot module so
-# the live installer can write it to a target disk.  The raw MBR image is
-# small enough (64 MiB) to fit in a single module.
-if [[ -n "${DISK_IMAGE:-}" && -f "$DISK_IMAGE" ]]; then
-    cp "$DISK_IMAGE" "$STAGE/boot/aperture-disk.img"
-    echo "    module_path: boot():/boot/aperture-disk.img" >> "$STAGE/limine.conf"
-fi
 
 case "$ARCH" in
     x86_64)
