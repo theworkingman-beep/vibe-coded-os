@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "kernel",
     "crates/pe-parser", "crates/x86-decode", "crates/aarch64-decode",
+    "crates/part-parser",
 ]
 exclude = [
     "tools/bootimage",

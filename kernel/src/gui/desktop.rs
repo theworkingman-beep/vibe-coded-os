@@ -9,17 +9,21 @@
 use super::{clear_window, create_window, draw_text, Color, WindowId, COMPOSITOR};
 use crate::arch::{mouse_buttons, mouse_position};
 use crate::installer;
+use crate::win32::objects;
 
 const TASKBAR_HEIGHT: i32 = 28;
 const BUTTON_WIDTH: i32 = 80;
 const BUTTON_HEIGHT: i32 = 22;
 const TERMINAL_X: i32 = 8;
 const INSTALL_X: i32 = 96;
+const TASKS_X: i32 = 184;
+const SHUT_X: i32 = 272;
 const BUTTON_Y: i32 = 3;
 
 static mut DESKTOP_WINDOW: Option<WindowId> = None;
 static mut TERMINAL_WINDOW: Option<WindowId> = None;
 static mut DMESG_WINDOW: Option<WindowId> = None;
+static mut TASKS_WINDOW: Option<WindowId> = None;
 static mut BUTTON_DOWN_LAST: bool = false;
 static mut TERMINAL_TEXT_LEN: usize = 0;
 static mut TERMINAL_TEXT: [u8; 256] = [0; 256];
@@ -60,6 +64,10 @@ fn draw_taskbar(desktop: WindowId) {
     draw_taskbar_button(desktop, TERMINAL_X, "Terminal");
     // Installer button.
     draw_taskbar_button(desktop, INSTALL_X, "Install");
+    // Task Manager button (Phase 9).
+    draw_taskbar_button(desktop, TASKS_X, "Tasks");
+    // Shut Down button (Phase 9).
+    draw_taskbar_button(desktop, SHUT_X, "Shut");
 }
 
 fn draw_taskbar_button(desktop: WindowId, x: i32, label: &str) {
@@ -120,6 +128,26 @@ pub fn handle_mouse() -> bool {
             ) {
                 installer::open();
                 clicked = true;
+            } else if point_in_rect(
+                mx,
+                my,
+                TASKS_X,
+                BUTTON_Y,
+                TASKS_X + BUTTON_WIDTH,
+                BUTTON_Y + BUTTON_HEIGHT,
+            ) {
+                open_task_manager();
+                clicked = true;
+            } else if point_in_rect(
+                mx,
+                my,
+                SHUT_X,
+                BUTTON_Y,
+                SHUT_X + BUTTON_WIDTH,
+                BUTTON_Y + BUTTON_HEIGHT,
+            ) {
+                crate::logln!("desktop: Shut button clicked");
+                crate::arch::shutdown();
             }
             if clicked {
                 super::request_render();
@@ -145,6 +173,7 @@ pub fn type_char(ch: char) {
             match ch {
                 'i' | 'I' => installer::open(),
                 'd' | 'D' => open_dmesg(),
+                't' | 'T' => open_task_manager(),
                 _ => {}
             }
             super::request_render();
@@ -187,6 +216,54 @@ fn open_dmesg() {
             DMESG_WINDOW = id;
         }
         redraw_dmesg();
+        super::request_render();
+    }
+}
+
+/// Open the Task Manager window (Phase 9). Lists live object-manager handles
+/// by kind — processes, threads, files, registry keys — giving a real view
+/// of kernel state.
+fn open_task_manager() {
+    unsafe {
+        if TASKS_WINDOW.is_none() {
+            let id = create_window("Task Manager", 220, 120, 360, 240);
+            TASKS_WINDOW = id;
+        }
+        redraw_task_manager();
+        super::request_render();
+    }
+}
+
+fn redraw_task_manager() {
+    use alloc::format;
+    unsafe {
+        let Some(win) = TASKS_WINDOW else { return };
+        clear_window(Some(win), Color::new(0x18, 0x18, 0x20));
+        draw_text(Some(win), "Aperture Task Manager", 12, 12, Color::WHITE);
+        let processes = objects::count_kind(objects::ObjectKind::Process);
+        let threads = objects::count_kind(objects::ObjectKind::Thread);
+        let files = objects::count_kind(objects::ObjectKind::File);
+        let keys = objects::count_kind(objects::ObjectKind::RegistryKey);
+        let total = objects::count_all();
+        let mut y = 32;
+        let lines = [
+            format!("Processes : {}", processes),
+            format!("Threads   : {}", threads),
+            format!("Files     : {}", files),
+            format!("Reg keys  : {}", keys),
+            format!("Handles   : {}", total),
+        ];
+        for line in &lines {
+            draw_text(Some(win), line, 12, y, Color::new(0x00, 0xFF, 0x00));
+            y += 12;
+        }
+        draw_text(
+            Some(win),
+            "Press Shut or Esc to power off.",
+            12,
+            y + 8,
+            Color::new(0xC0, 0xC0, 0xC0),
+        );
         super::request_render();
     }
 }

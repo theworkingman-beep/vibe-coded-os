@@ -122,6 +122,148 @@ impl Compositor {
         })
     }
 
+    // --- GDI-style drawing primitives (operate on a window backbuffer) -----
+    //
+    // These mirror the Windows GDI drawing model: a device context targets a
+    // window, and primitives are drawn in window-relative coordinates before
+    // the compositor blits the backbuffer to the framebuffer.
+
+    /// Set a single window-relative pixel (GDI `SetPixel`).
+    pub fn window_set_pixel(&mut self, id: WindowId, x: i32, y: i32, color: Color) {
+        let Some(w) = self.window_mut(id) else {
+            return;
+        };
+        if x < 0 || y < 0 || x >= w.width || y >= w.height {
+            return;
+        }
+        let idx = (y as usize * w.width as usize) + x as usize;
+        unsafe { core::ptr::write_volatile(w.backbuffer.add(idx), color) };
+    }
+
+    /// Draw a line with Bresenham's algorithm (GDI `LineTo` segment).
+    pub fn window_draw_line(
+        &mut self,
+        id: WindowId,
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+        color: Color,
+    ) {
+        let (dx, dy) = (i32::abs(x1 - x0), i32::abs(y1 - y0));
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx - dy;
+        let (mut x, mut y) = (x0, y0);
+        loop {
+            self.window_set_pixel(id, x, y, color);
+            if x == x1 && y == y1 {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 > -dy {
+                err -= dy;
+                x += sx;
+            }
+            if e2 < dx {
+                err += dx;
+                y += sy;
+            }
+        }
+    }
+
+    /// Fill an axis-aligned rectangle (GDI `FillRect` / `Rectangle` filled).
+    pub fn window_fill_rect(
+        &mut self,
+        id: WindowId,
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+        color: Color,
+    ) {
+        let (xa, xb) = (i32::min(x0, x1), i32::max(x0, x1));
+        let (ya, yb) = (i32::min(y0, y1), i32::max(y0, y1));
+        for y in ya..=yb {
+            for x in xa..=xb {
+                self.window_set_pixel(id, x, y, color);
+            }
+        }
+    }
+
+    /// Draw an axis-aligned rectangle outline (GDI `Rectangle`).
+    pub fn window_draw_rect(
+        &mut self,
+        id: WindowId,
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+        color: Color,
+    ) {
+        let (xa, xb) = (i32::min(x0, x1), i32::max(x0, x1));
+        let (ya, yb) = (i32::min(y0, y1), i32::max(y0, y1));
+        self.window_draw_line(id, xa, ya, xb, ya, color);
+        self.window_draw_line(id, xa, yb, xb, yb, color);
+        self.window_draw_line(id, xa, ya, xa, yb, color);
+        self.window_draw_line(id, xb, ya, xb, yb, color);
+    }
+
+    /// Draw an ellipse outline (GDI `Ellipse`) via the midpoint algorithm.
+    pub fn window_draw_ellipse(
+        &mut self,
+        id: WindowId,
+        cx: i32,
+        cy: i32,
+        rx: i32,
+        ry: i32,
+        color: Color,
+    ) {
+        if rx <= 0 || ry <= 0 {
+            return;
+        }
+        let rx2 = rx * rx;
+        let ry2 = ry * ry;
+        let mut x = 0;
+        let mut y = ry;
+        let mut px = 0;
+        let mut py = 2 * rx2 * y;
+        // Region 1.
+        let mut p = ry2 - rx2 * ry + (rx2 + 2) / 4;
+        while px < py {
+            self.window_set_pixel(id, cx + x, cy + y, color);
+            self.window_set_pixel(id, cx - x, cy + y, color);
+            self.window_set_pixel(id, cx + x, cy - y, color);
+            self.window_set_pixel(id, cx - x, cy - y, color);
+            x += 1;
+            px += 2 * ry2;
+            if p < 0 {
+                p += ry2 + px;
+            } else {
+                y -= 1;
+                py -= 2 * rx2;
+                p += ry2 + px - py;
+            }
+        }
+        // Region 2.
+        p = ry2 * (x * x + x) + rx2 * (y * y - y) - rx2 * ry2;
+        while y >= 0 {
+            self.window_set_pixel(id, cx + x, cy + y, color);
+            self.window_set_pixel(id, cx - x, cy + y, color);
+            self.window_set_pixel(id, cx + x, cy - y, color);
+            self.window_set_pixel(id, cx - x, cy - y, color);
+            y -= 1;
+            py -= 2 * rx2;
+            if p > 0 {
+                p += rx2 - py;
+            } else {
+                x += 1;
+                px += 2 * ry2;
+                p += rx2 - py + px;
+            }
+        }
+    }
+
     /// Render all visible windows to the framebuffer, back-to-front.
     pub fn render(&mut self) {
         self.clear(Color::DARK_GRAY);

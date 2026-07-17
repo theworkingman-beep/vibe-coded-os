@@ -68,7 +68,7 @@ pub unsafe fn run_x86_64_loop(entry: u64) -> ! {
 
 /// Execute the instruction at `pc` and return the next guest PC, or `None`
 /// if the instruction is unsupported.
-fn execute_instruction(t: &mut Thread, pc: u64, code: &[u8]) -> Option<u64> {
+pub(crate) fn execute_instruction(t: &mut Thread, pc: u64, code: &[u8]) -> Option<u64> {
     if code.is_empty() {
         return None;
     }
@@ -377,4 +377,48 @@ fn dispatch_syscall(t: &mut Thread, return_pc: u64) -> Option<u64> {
     let status = nt::dispatch(SyscallNumber::from(number), args) as u64;
     t.write_reg(Register::Rax, status);
     Some(return_pc)
+}
+
+/// Boot-time self-test: run a tiny x86_64 guest program through the
+/// interpreter's decoder + semantics and verify the resulting register
+/// state. The program is:
+///   mov rax, 5        ; 48 B8 05 00 00 00 00 00 00 00
+///   mov rbx, 3        ; 48 BB 03 00 00 00 00 00 00 00
+///   xor rax, rbx      ; 48 31 D8   -> rax = 5 ^ 3 = 6
+/// No guest memory is touched (register-only operands), so this is safe to
+/// run on both architectures without mapping a guest address space.
+pub fn self_test() -> bool {
+    let code: &[u8] = &[
+        0x48, 0xB8, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rax, 5
+        0x48, 0xBB, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rbx, 3
+        0x48, 0x31, 0xD8, // xor rax, rbx
+    ];
+    let base = code.as_ptr() as u64;
+    let mut t = Thread::new(1, 1, 0);
+    let mut pc = base;
+    let mut steps = 0usize;
+    while steps < 16 {
+        let start = (pc - base) as usize;
+        if start >= code.len() {
+            break;
+        }
+        let end = (start + 15).min(code.len());
+        let window = &code[start..end];
+        match execute_instruction(&mut t, pc, window) {
+            Some(next) => pc = next,
+            None => break,
+        }
+        steps += 1;
+    }
+    let rax = t.read_reg(Register::Rax);
+    let rbx = t.read_reg(Register::Rbx);
+    let ok = rax == 6 && rbx == 3 && steps == 3;
+    crate::logln!(
+        "interp: self_test {} (steps={} rax={} rbx={})",
+        if ok { "OK" } else { "FAIL" },
+        steps,
+        rax,
+        rbx
+    );
+    ok
 }

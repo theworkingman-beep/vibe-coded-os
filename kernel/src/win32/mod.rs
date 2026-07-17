@@ -22,6 +22,7 @@ pub mod port;
 pub mod process;
 pub mod registry;
 pub mod scheduler;
+pub mod shims;
 pub mod thread;
 pub mod win32k;
 
@@ -31,6 +32,63 @@ pub fn init() {
     registry::init();
     nt::init();
     nt::init_syscall_table();
+}
+
+/// Run the per-phase self-tests for the Win32 subsystem.
+///
+/// Each test exercises a real, implemented feature and logs its result. None
+/// of them enter user mode or block, so the GUI main loop still runs. Called
+/// from `kernel_main` after the heap and Win32 subsystem are initialized.
+pub fn phase_self_tests() {
+    crate::logln!("win32: phase self-tests start");
+    // Phase 2: IPC message ports.
+    let port_ok = port::self_test();
+    // Phase 3: built-in DLL shim import resolution.
+    let shim_ok = shims::self_test();
+    // Phase 4: x86_64 guest interpreter runs a tiny program.
+    let interp_ok = abi::interpreter::self_test();
+    // Phase 7: NT registry create/set/query round-trip.
+    let reg_ok = nt::registry_self_test();
+    // Phase 9: process environment variables.
+    let env_ok = process_env_self_test();
+    crate::logln!(
+        "win32: phase self-tests done (port={} shim={} interp={} reg={} env={})",
+        port_ok,
+        shim_ok,
+        interp_ok,
+        reg_ok,
+        env_ok
+    );
+}
+
+/// Phase 9 self-test: a process environment block get/set round-trip.
+fn process_env_self_test() -> bool {
+    let mut p = process::Process::new(99);
+    p.set_env("OS", "ApertureOS");
+    p.set_env(
+        "PROCESSOR_ARCHITECTURE",
+        if cfg!(feature = "arch_x86_64") {
+            "AMD64"
+        } else {
+            "ARM64"
+        },
+    );
+    // Case-insensitive overwrite returns the previous value.
+    let prev = p.set_env("os", "ApertureOS-v1");
+    match (p.get_env("OS"), prev.as_deref()) {
+        (Some(v), Some("ApertureOS")) if v == "ApertureOS-v1" => {
+            crate::logln!(
+                "env: self_test OK (OS={}, arch={})",
+                v,
+                p.get_env("PROCESSOR_ARCHITECTURE").unwrap_or("?")
+            );
+            true
+        }
+        other => {
+            crate::logln!("env: self_test FAIL {:?}", other);
+            false
+        }
+    }
 }
 
 /// Load a small synthetic PE image from the VFS to verify the loader, VFS,

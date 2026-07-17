@@ -36,6 +36,7 @@ version = "1.0.0"
 dependencies = [
  "aarch64-decode",
  "limine",
+ "part-parser",
  "pe-parser",
  "spin",
  "uart_16550",
@@ -57,6 +58,10 @@ checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
 dependencies = [
  "scopeguard",
 ]
+
+[[package]]
+name = "part-parser"
+version = "1.0.0"
 
 [[package]]
 name = "pe-parser"

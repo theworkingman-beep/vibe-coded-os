@@ -10,6 +10,7 @@
 use core::cmp::min;
 
 pub mod ata;
+pub mod partition;
 
 const MAX_DEVICES: usize = 4;
 

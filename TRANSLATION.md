@@ -48,7 +48,7 @@ does not yet run translated Windows binaries.
 |---|---|---|
 | x86_64 decoder | `crates/x86-decode` | Partial (NOP/RET/JMP/SYSCALL + more), unit-tested |
 | AArch64 decoder | `crates/aarch64-decode` | Partial (NOP/RET/SVC/BL/MOVZ/ADRP), unit-tested |
-| x86_64 interpreter | `win32/abi/interpreter.rs` | Partial — decodes NOP/RET/JMP/CALL/MOV imm/XOR/LEA/SYSCALL, updates guest regs, halts on unsupported |
+| x86_64 interpreter | `win32/abi/interpreter.rs` | Partial — decodes NOP/RET/JMP/CALL/MOV imm/XOR/LEA/SYSCALL, updates guest regs, halts on unsupported. Boot self-test runs `mov rax,5; mov rbx,3; xor rax,rbx` and verifies steps/rax/rbx |
 | AArch64 interpreter | `win32/abi/aarch64_interpreter.rs` | Scaffold — decodes + logs a few instructions, no reg emulation |
 | x86_64→AArch64 JIT | `win32/abi/x86_jit.rs` | Scaffold — `translate_block` placeholder, no emission |
 | ARM64→x86_64 JIT | `win32/abi/aarch64_jit.rs` | Scaffold — placeholder |

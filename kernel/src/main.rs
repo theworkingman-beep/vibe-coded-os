@@ -167,6 +167,10 @@ extern "C" fn _start() -> ! {
         kernel::logln!("No RSDP provided by bootloader.");
     }
 
+    // Phase 8: native driver discovery (PCI bus 0 enumeration + CMOS RTC on
+    // x86_64). No-op on architectures without wired bus access.
+    kernel::drivers::init();
+
     if let Some(region) = usable {
         // The bump heap dereferences its pointers directly, so hand it virtual
         // (HHDM) addresses rather than physical ones.
@@ -184,6 +188,11 @@ extern "C" fn _start() -> ! {
         kernel::logln!("WARNING: no usable memory region found.");
     }
 
+    // Run the Win32 per-phase self-tests now that the early heap is available.
+    // These exercise real subsystem features (IPC, DLL shims, interpreter,
+    // registry, environment) and log results; none enter user mode.
+    kernel::win32::phase_self_tests();
+
     // Use the first Limine module as the installer disk image.  It is the
     // raw MBR disk image built by tools/build-disk-image.sh; we just leak it
     // so the installer can read it without copying.
@@ -192,6 +201,9 @@ extern "C" fn _start() -> ! {
             let image = file.data();
             kernel::logln!("Installer disk module: {} bytes", image.len());
             kernel::installer::set_image(image.as_ptr(), image.len());
+            // Phase 5: parse and log the disk image's partition table (MBR or
+            // GPT) so the on-disk layout is visible in the boot log.
+            kernel::disk::partition::log_partitions(image);
         } else {
             kernel::logln!("No boot modules were loaded; installer disabled.");
         }
@@ -224,6 +236,11 @@ extern "C" fn _start() -> ! {
             }
             kernel::gui::init_compositor(buffer, info);
             kernel::gui::desktop::init(info.width as i32, info.height as i32);
+            // Phase 6: GDI primitives + Win32 window-manager model self-tests.
+            // These create extra desktop windows; render once afterward so
+            // they are visible.
+            kernel::gui::gdi_self_test();
+            kernel::win32::win32k::self_test();
             kernel::gui::render();
             kernel::logln!(
                 "Framebuffer: {}x{} stride={} bpp={}",
@@ -244,6 +261,13 @@ extern "C" fn _start() -> ! {
     loop {
         let mut activity = false;
         while let Some(ch) = kernel::arch::interrupts::read_char() {
+            // Phase 9: Esc powers the machine off (ACPI on x86_64, PSCI on
+            // AArch64). Handled before desktop dispatch so it works from any
+            // state.
+            if ch == '\u{1B}' {
+                kernel::logln!("input: Esc -> shutdown");
+                kernel::arch::shutdown();
+            }
             kernel::gui::desktop::type_char(ch);
             activity = true;
         }

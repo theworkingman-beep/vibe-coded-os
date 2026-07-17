@@ -101,6 +101,24 @@ pub fn hlt() -> ! {
     }
 }
 
+/// Power off the machine (Phase 9 system service).
+///
+/// Writes `SLP_EN | S5` (`0x2000`) to the ACPI PM1a control register at I/O
+/// port `0x604`, the standard QEMU/ACPI poweroff. On real hardware the PM1a
+/// base is discovered from the ACPI FADT (not yet parsed); `0x604` is the
+/// QEMU default and a common PC value. Falls back to halting if the write
+/// does not power off.
+pub fn shutdown() -> ! {
+    x86_64::instructions::interrupts::disable();
+    crate::logln!("shutdown: ACPI poweroff (PM1a_CNT <- 0x2000)");
+    unsafe {
+        let mut pm1a_cnt: Port<u16> = Port::new(0x604);
+        pm1a_cnt.write(0x2000);
+    }
+    // If the platform did not power off, halt forever.
+    hlt()
+}
+
 /// Run `f` with interrupts disabled, restoring the previous state afterwards.
 pub fn without_interrupts<R, F: FnOnce() -> R>(f: F) -> R {
     x86_64::instructions::interrupts::without_interrupts(f)

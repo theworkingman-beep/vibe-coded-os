@@ -34,8 +34,11 @@ memory map, HHDM offset, framebuffer, RSDP, and boot modules.
 
 Each architecture implements a uniform interface: `init()`, `debug_putchar(u8)`,
 `hlt()`, `halt_once()`, `without_interrupts()`, `monotonic_cycles()`,
-`mouse_position()`, `mouse_buttons()`, and `read_char()` (via
-`interrupts::read_char`).
+`mouse_position()`, `mouse_buttons()`, `read_char()` (via
+`interrupts::read_char`), and `shutdown() -> !` (x86_64: ACPI PM1a_CNT
+`0x604 ← 0x2000`; AArch64: PSCI `SYSTEM_OFF` via `HVC #0, x0=0x84000008`).
+`shutdown` is wired to the Esc key in the main loop and verified to power off
+QEMU (exit 0) on both arches.
 
 - **x86_64** (`arch/x86_64/`): GDT + TSS (ring 0/3 selectors, IST1), IDT with
   PIC remap and a 1000 Hz PIT preemptive timer, PS/2 keyboard + mouse,
@@ -52,8 +55,10 @@ Each architecture implements a uniform interface: `init()`, `debug_putchar(u8)`,
   and `reserve_range`. **Functional** on both arches (driven by the Limine
   memmap).
 - `hhdm.rs`: higher-half direct-map offset translation. **Functional.**
-- `heap.rs`: 9 size-class free-list allocator (large allocations currently
-  leak — no side table). **Partial.**
+- `heap.rs`: 9 size-class free-list allocator; large allocations (>4096 B)
+  use a bounded stack buffer for frame tracking (the previous `Vec`-based
+  path re-entered the global allocator and deadlocked the non-reentrant
+  `HEAP` mutex — fixed). **Functional.**
 - `page_table.rs`: x86_64 4-level page-table walker (`map`/`map_region`/
   `translate`, copies the kernel mapping). AArch64 is a stub. **x86_64
   functional, AArch64 scaffold.**
@@ -68,54 +73,85 @@ space activation on AArch64.
 ## 5. Windows compatibility subsystem (`kernel/src/win32/`)
 
 - `loader.rs`: PE/COFF loader. Parses headers (via `pe-parser`), allocates a
-  process, maps sections into per-process page tables (x86_64), and now
-  **parses + logs the import directory**. Import *resolution* (binding to
-  built-in native system DLL shims), base relocations, and TLS are not yet
-  implemented. **Partial.**
-- `nt.rs`: NT syscall dispatch. 9 of 16 syscall numbers are wired
+  process, maps sections into per-process page tables (x86_64), parses the
+  import directory, and **resolves each import thunk against the built-in
+  shim registry** (`shims.rs`). Base relocations, TLS, and external `.dll`
+  loading are not yet implemented. **Partial.**
+- `shims.rs`: built-in native system DLL shim registry. `(dll, export)` pairs
+  map to native Rust handlers (ntdll `NtDelayExecution`/`NtQuerySystemInformation`/
+  `NtAllocateVirtualMemory`/`NtFreeVirtualMemory`/`NtClose`; kernel32
+  `Sleep`/`GetTickCount`/`GetTickCount64`/`ExitProcess`/`GetLastError`).
+  Case-insensitive, path-stripped resolution. Boot self-test passes on both
+  arches. **Functional.**
+- `nt.rs`: NT syscall dispatch. **All 16 syscall numbers are wired**
   (`NtClose`, `NtCreateFile`, `NtReadFile`, `NtWriteFile`,
   `NtAllocateVirtualMemory`, `NtFreeVirtualMemory`,
   `NtQuerySystemInformation`, `NtQueryInformationProcess`,
-  `NtDelayExecution`); the rest return `NotImplemented`. `dispatch` does real
-  user-pointer-to-physical translation. **Partial.**
-- `objects.rs`: 1024-slot handle table with allocate/lookup/close and object
-  kinds. **Functional.**
+  `NtDelayExecution`, `NtCreateKey`, `NtSetValueKey`, `NtQueryValueKey`,
+  `NtCreateProcess`, `NtCreateThread`, `NtSetInformationProcess`,
+  `NtWaitForMultipleObjects`). `dispatch` does real
+  user-pointer-to-physical translation. **Functional (QEMU).**
+- `objects.rs`: 1024-slot handle table with allocate/lookup/close, object
+  kinds, and `count_kind`/`count_all` (used by the Task Manager). **Functional.**
 - `process.rs` / `thread.rs`: `Process` and `Thread` structs with a register
-  file; no PEB/TEB or reference counting yet. **Scaffold/partial.**
-- `registry.rs`: in-memory flat 256-slot registry shim; no hives or
-  persistence. **Partial.**
-- `win32k.rs`: maps a desktop to a compositor window; message dispatch is a
-  TODO. **Scaffold.**
+  file; `Process` now carries a native PEB/TEB copy and a case-insensitive
+  environment block (`get_env`/`set_env`). No reference counting yet.
+  **Partial.**
+- `registry.rs`: in-memory flat 256-slot registry shim; create/set/query
+  verified by a boot self-test (HKLM\Software\Aperture "Version" round-trip).
+  No hives or persistence. **Partial.**
+- `win32k.rs`: maps a desktop to a compositor window and implements a Win32
+  window-manager model — `WindowClass`/`Wnd`/`Message`, `register_class`,
+  `create_window_ex`, `post_message`, `get_message`, `def_window_proc`,
+  `dispatch_message`, and `WM_*` constants. Boot self-test (register → create
+  → post `WM_PAINT` → get → dispatch) passes on both arches. **Partial.**
 
 ## 6. Binary translation (`kernel/src/win32/abi/`)
 
 - `interpreter.rs`: x86_64 guest interpreter — decodes NOP/RET/JMP/CALL/MOV
   imm/XOR/LEA/SYSCALL and updates the guest register file; halts on
-  unsupported instructions. **Partial.**
+  unsupported instructions. A boot self-test runs
+  `mov rax,5; mov rbx,3; xor rax,rbx` and verifies the result. **Partial.**
 - `aarch64_interpreter.rs`: decodes + logs a few AArch64 instructions; no
   register emulation. **Scaffold.**
 - `x86_jit.rs` / `aarch64_jit.rs`: `translate_block` returns a placeholder;
   no code emission. **Scaffold.**
 - `syscall.rs`: inline-asm user-mode syscall helper. **Functional.**
 
-The decoders (`crates/x86-decode`, `crates/aarch64-decode`) are unit-tested.
-See [TRANSLATION.md](TRANSLATION.md).
+The decoders (`crates/x86-decode`, `crates/aarch64-decode`) and the partition
+parser (`crates/part-parser`) are unit-tested. See [TRANSLATION.md](TRANSLATION.md).
 
 ## 7. GUI (`kernel/src/gui/`)
 
 Software-rendered compositor with up to 32 windows, premultiplied RGBA
 backbuffers, back-to-front blending, and RGB/BGR/unknown pixel-format
-handling. The desktop (`desktop.rs`) renders a taskbar, a dmesg window, and
-Terminal/Install buttons, with mouse + keyboard input (x86_64). `widgets.rs`
+handling. The desktop (`desktop.rs`) renders a taskbar, a dmesg window,
+Terminal/Install buttons, and a Task Manager window (live
+process/thread/file/key/total handle counts via `objects::count_kind`), with
+mouse + keyboard input (x86_64). `widgets.rs`
 (Button/Label/ListBox/ProgressBar), `font.rs` (5×7 bitmap glyphs), and
-`cursor.rs` (16×16 arrow) are functional. **No Win32 window-manager model or
-GDI yet.**
+`cursor.rs` (16×16 arrow) are functional. GDI primitives
+(`gdi_set_pixel`/`gdi_draw_line` Bresenham/`gdi_fill_rect`/`gdi_draw_rect`/
+`gdi_draw_ellipse` midpoint) are implemented in `compositor.rs` and pass a
+boot self-test on both arches. The Win32 window-manager model lives in
+`win32k.rs` (see §5).
 
 ## 8. VFS and storage (`kernel/src/vfs/`, `kernel/src/disk/`)
 
 In-memory virtual filesystem (tree of nodes, 64 KiB per-file cap) backing NT
-file syscalls. ATA PIO driver (x86_64) for disk I/O. **No on-disk filesystem
-(FAT32/NTFS), GPT/MBR parsing, or real-hardware storage drivers yet.**
+file syscalls. ATA PIO driver (x86_64) for disk I/O. `disk/partition.rs` logs
+the MBR or GPT layout of a disk image using the host-tested `part-parser`
+crate (protective-MBR detection, GPT header + entry parse). **No on-disk
+filesystem (FAT32/NTFS) or real-hardware storage drivers yet.**
+
+## 8b. Drivers (`kernel/src/drivers/`)
+
+- `pci.rs` (x86_64): PCI config-space access via I/O ports 0xCF8/0xCFC and
+  bus-0 enumeration (logs vendor/device/class). QEMU enumerates 6 devices.
+  **Functional (QEMU).**
+- `rtc.rs` (x86_64): CMOS RTC read via ports 0x70/0x71 with BCD decode;
+  `log_rtc_time` prints the wall clock. **Functional (QEMU).**
+- AArch64 uses PSCI for power-off (see §2 `shutdown`); no ECAM/GIC driver yet.
 
 ## 9. Installer (`kernel/src/installer/`)
 

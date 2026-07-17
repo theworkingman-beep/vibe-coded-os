@@ -160,18 +160,55 @@ pub fn requires_translation(guest: MachineType) -> bool {
 }
 
 /// Parse the PE import directory and log each imported DLL with its function
-/// count. Architecture-independent (pure PE header parsing).
+/// count, then attempt to resolve each imported function against the built-in
+/// native system DLL shims (`shims::resolve_import`). Architecture-independent
+/// (pure PE header parsing + shim lookup).
 fn log_imports(image: &PeImage, data: &[u8]) {
     let descriptors = parse_import_directory(data, image);
     let mut count = 0;
+    let mut resolved = 0usize;
+    let mut unresolved = 0usize;
     for desc in descriptors.iter().flatten() {
         let name = read_rva_string(data, image, desc.name_rva).unwrap_or("<bad name rva>");
         let thunks = parse_import_thunks(data, image, desc.int_rva);
+        let mut dll_resolved = 0usize;
+        let mut dll_unresolved = 0usize;
+        for thunk in thunks.iter().flatten() {
+            let thunk = *thunk;
+            // High bit set => import by ordinal (no name to resolve).
+            const ORDINAL_FLAG: u64 = 1 << 63;
+            if thunk & ORDINAL_FLAG != 0 {
+                unresolved += 1;
+                dll_unresolved += 1;
+                continue;
+            }
+            // Hint/Name struct: 2-byte hint + null-terminated name at the RVA.
+            let name_rva = (thunk as u32).wrapping_add(2);
+            let export = read_rva_string(data, image, name_rva).unwrap_or("<bad import rva>");
+            if super::shims::resolve_import(name, export).is_some() {
+                resolved += 1;
+                dll_resolved += 1;
+            } else {
+                unresolved += 1;
+                dll_unresolved += 1;
+            }
+        }
         let n = thunks.iter().flatten().count();
-        crate::logln!("pe: import {} ({} functions)", name, n);
+        crate::logln!(
+            "pe: import {} ({} functions, {} resolved, {} unresolved)",
+            name,
+            n,
+            dll_resolved,
+            dll_unresolved
+        );
         count += 1;
     }
-    crate::logln!("pe: {} imported DLL(s)", count);
+    crate::logln!(
+        "pe: {} imported DLL(s), {} resolved, {} unresolved",
+        count,
+        resolved,
+        unresolved
+    );
 }
 
 fn host_machine() -> MachineType {

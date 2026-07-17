@@ -16,10 +16,14 @@ qemu-system-x86_64 -cdrom build/ApertureOS-x86_64.iso -serial stdio -m 512M
 ```
 
 - **SeaBIOS (BIOS)**: ✅ boots to `Kernel idle; reading input.` with
-  framebuffer compositor and PS/2 input.
+  framebuffer compositor and PS/2 input. Win32 phase self-tests
+  (port/shim/interp/registry/env), GDI self-test, and win32k self-test all
+  log `OK`. PCI bus-0 enumeration logs 6 QEMU devices; CMOS RTC reads the
+  wall clock. Esc triggers ACPI power-off (QEMU exits 0).
 - **OVMF (UEFI)**: boots via the Limine UEFI binary (validated in CI).
 - ACPI RSDP/RSDT/XSDT headers parsed; memory map reconciled (17 regions in
-  the default 512 MiB QEMU config).
+  the default 512 MiB QEMU config). ACPI PM1a_CNT power-off (`0x604 ←
+  0x2000`) verified working in QEMU.
 
 ### AArch64 — `build/ApertureOS-aarch64.iso` (UEFI)
 
@@ -30,7 +34,9 @@ qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 512M \
 ```
 
 - **QEMU `virt`, Cortex-A72, EDK2 UEFI**: ✅ boots to `Kernel idle; reading
-  input.` with a ramfb framebuffer and the semihosting early console.
+  input.` with a ramfb framebuffer and the semihosting early console. Win32
+  phase self-tests, GDI self-test, and win32k self-test all log `OK`. Esc
+  triggers PSCI `SYSTEM_OFF` (QEMU exits 0).
 - The EL1 exception vector table is installed; GIC + architectural timer are
   scaffolded but disabled (see AArch64 notes below).
 
@@ -89,10 +95,10 @@ qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 512M \
 |---|---|---|
 | ATA PIO storage | ✅ | ❌ |
 | AHCI / NVMe / SD-MMC | ❌ | ❌ |
-| PCI/PCIe enumeration (ECAM) | ❌ | ❌ |
+| PCI bus-0 enumeration (config-space I/O) | ✅ (QEMU) | ❌ (ECAM not wired) |
 | USB (xHCI / HID) | ❌ | ❌ |
 | Network (E1000 / Realtek / virtio-net) | ❌ | ❌ |
 | Audio (Intel HDA / virtio-snd) | ❌ | ❌ |
 | GPU acceleration | ❌ (software compositor only) | ❌ |
-| RTC / clock sources | ❌ (PIT timer only) | ❌ (architectural counter read only) |
-| Power (ACPI PM1 / PSCI) | ❌ | ❌ |
+| RTC / clock sources | ✅ CMOS RTC (QEMU) | ❌ (architectural counter read only) |
+| Power (ACPI PM1 / PSCI) | ✅ ACPI PM1a_CNT | ✅ PSCI SYSTEM_OFF |

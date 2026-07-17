@@ -74,5 +74,21 @@ pub fn close(handle: Handle) -> bool {
     }
 }
 
+/// Count live handles of a given kind (used by the task manager / system
+/// information self-test).
+pub fn count_kind(kind: ObjectKind) -> usize {
+    let table = HANDLE_TABLE.lock();
+    table
+        .iter()
+        .filter(|slot| matches!(slot, Some(h) if h.kind == kind))
+        .count()
+}
+
+/// Total number of live handles.
+pub fn count_all() -> usize {
+    let table = HANDLE_TABLE.lock();
+    table.iter().filter(|slot| slot.is_some()).count()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Handle(pub u32);

@@ -116,13 +116,26 @@ impl Heap {
     }
 
     unsafe fn alloc_large(&mut self, pages: usize) -> *mut u8 {
-        let mut frames = alloc::vec::Vec::with_capacity(pages);
-        for _ in 0..pages {
+        // Use a fixed stack buffer for the frame list instead of a `Vec`.
+        // Allocating a `Vec` here would re-enter the global allocator
+        // (`HEAP.lock()` is already held by `alloc`), deadlocking on the
+        // non-reentrant `spin::Mutex`. Bounded to 256 pages (1 MiB); larger
+        // requests fail until a scatter-gather mapper lands.
+        const MAX_LARGE_PAGES: usize = 256;
+        if pages == 0 || pages > MAX_LARGE_PAGES {
+            return ptr::null_mut();
+        }
+        let mut frames: [u64; MAX_LARGE_PAGES] = [0; MAX_LARGE_PAGES];
+        let mut count = 0usize;
+        for i in 0..pages {
             match crate::mm::frame_allocator::allocate() {
-                Some(f) => frames.push(f),
+                Some(f) => {
+                    frames[i] = f;
+                    count += 1;
+                }
                 None => {
-                    for f in frames {
-                        crate::mm::frame_allocator::free(f);
+                    for j in 0..count {
+                        crate::mm::frame_allocator::free(frames[j]);
                     }
                     return ptr::null_mut();
                 }

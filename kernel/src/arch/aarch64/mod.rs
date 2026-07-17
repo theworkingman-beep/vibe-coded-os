@@ -135,3 +135,21 @@ pub fn hlt() -> ! {
         halt_once();
     }
 }
+
+/// Power off the machine (Phase 9 system service).
+///
+/// Issues a PSCI `SYSTEM_OFF` (`0x8400_0008`) hypercall via `HVC #0`. QEMU's
+/// `virt` machine and most AArch64 firmwares implement PSCI, so this powers
+/// off without requiring semihosting. Falls back to halting if PSCI is not
+/// present.
+pub fn shutdown() -> ! {
+    crate::logln!("shutdown: PSCI SYSTEM_OFF");
+    unsafe {
+        core::arch::asm!(
+            "hvc #0",
+            in("x0") 0x8400_0008u64,
+            options(nomem, nostack)
+        );
+    }
+    hlt()
+}

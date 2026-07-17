@@ -4,7 +4,7 @@
 //! implementations for the most important NT kernel calls. The implementations
 //! route to the Aperture OS VFS and memory allocator.
 
-use super::{loader, objects};
+use super::{loader, objects, process, registry, thread};
 use crate::vfs::{self, FileHandle, NodeKind};
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -128,6 +128,19 @@ pub fn init_syscall_table() {
                 handle_query_information_process
             ),
             (SyscallNumber::NtDelayExecution, handle_delay_execution),
+            (SyscallNumber::NtCreateKey, handle_create_key),
+            (SyscallNumber::NtSetValueKey, handle_set_value_key),
+            (SyscallNumber::NtQueryValueKey, handle_query_value_key),
+            (SyscallNumber::NtCreateProcess, handle_create_process),
+            (SyscallNumber::NtCreateThread, handle_create_thread),
+            (
+                SyscallNumber::NtSetInformationProcess,
+                handle_set_information_process
+            ),
+            (
+                SyscallNumber::NtWaitForMultipleObjects,
+                handle_wait_for_multiple_objects
+            ),
         );
     }
 }
@@ -365,6 +378,342 @@ fn handle_delay_execution(args: [usize; 16]) -> NtStatus {
     // block the thread, but the baseline scheduler only supports round-robin.
     crate::win32::scheduler::yield_current();
     NtStatus::Success
+}
+
+fn handle_create_key(args: [usize; 16]) -> NtStatus {
+    // Simplified bring-up ABI:
+    //   args[0] = pointer to u64 that receives the key handle
+    //   args[1] = pointer to null-terminated key path
+    let out_handle_ptr = args[0] as u64;
+    let path_ptr = args[1] as u64;
+    if path_ptr == 0 || out_handle_ptr == 0 {
+        return NtStatus::InvalidParameter;
+    }
+    let path_phys = match unsafe { user_ptr_to_phys(path_ptr) } {
+        Some(p) => p,
+        None => return NtStatus::InvalidParameter,
+    };
+    let out_phys = match unsafe { user_ptr_to_phys(out_handle_ptr) } {
+        Some(p) => p,
+        None => return NtStatus::InvalidParameter,
+    };
+    let path = unsafe { guest_cstr(path_phys, 256) };
+    // Leak a 'static copy of the path so the object handle can own it.
+    let leaked = leak_str(path);
+    let handle =
+        match objects::allocate(objects::ObjectKind::RegistryKey, leaked.as_ptr() as *mut ()) {
+            Some(h) => h,
+            None => return NtStatus::InvalidParameter,
+        };
+    unsafe { core::ptr::write_volatile(out_phys as *mut u64, handle.0 as u64) };
+    NtStatus::Success
+}
+
+fn handle_set_value_key(args: [usize; 16]) -> NtStatus {
+    // Simplified bring-up ABI:
+    //   args[0] = key handle
+    //   args[1] = value name (cstr)
+    //   args[2] = REG_* type
+    //   args[3] = data pointer
+    //   args[4] = data length (bytes)
+    let handle = objects::Handle(args[0] as u32);
+    let name_ptr = args[1] as u64;
+    let ty_raw = args[2] as u32;
+    let data_ptr = args[3] as u64;
+    let data_len = args[4];
+
+    let header = match objects::lookup(handle) {
+        Some(h) if h.kind == objects::ObjectKind::RegistryKey => h,
+        _ => return NtStatus::InvalidParameter,
+    };
+    let key_path: &str = unsafe {
+        let p = header.data as *const u8;
+        let mut len = 0usize;
+        while *p.add(len) != 0 {
+            len += 1;
+        }
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(p, len))
+    };
+
+    let value_name = if name_ptr == 0 {
+        ""
+    } else {
+        match unsafe { user_ptr_to_phys(name_ptr) } {
+            Some(p) => unsafe { guest_cstr(p, 256) },
+            None => return NtStatus::InvalidParameter,
+        }
+    };
+
+    let ty = match ty_raw {
+        1 => registry::RegValueType::String,
+        4 => registry::RegValueType::Dword,
+        11 => registry::RegValueType::Qword,
+        _ => registry::RegValueType::Binary,
+    };
+
+    let data = if data_ptr == 0 || data_len == 0 {
+        &[][..]
+    } else {
+        match unsafe { user_ptr_to_phys(data_ptr) } {
+            Some(p) => unsafe { core::slice::from_raw_parts(p as *const u8, data_len) },
+            None => return NtStatus::InvalidParameter,
+        }
+    };
+
+    if registry::set_value(key_path, value_name, ty, data) {
+        NtStatus::Success
+    } else {
+        NtStatus::InvalidParameter
+    }
+}
+
+fn handle_query_value_key(args: [usize; 16]) -> NtStatus {
+    // Simplified bring-up ABI:
+    //   args[0] = key handle
+    //   args[1] = value name (cstr)
+    //   args[2] = output buffer pointer
+    //   args[3] = output buffer length
+    //   args[4] = pointer to u32 that receives the written length
+    let handle = objects::Handle(args[0] as u32);
+    let name_ptr = args[1] as u64;
+    let out_ptr = args[2] as u64;
+    let out_len = args[3];
+    let ret_len_ptr = args[4] as u64;
+
+    let header = match objects::lookup(handle) {
+        Some(h) if h.kind == objects::ObjectKind::RegistryKey => h,
+        _ => return NtStatus::InvalidParameter,
+    };
+    let key_path: &str = unsafe {
+        let p = header.data as *const u8;
+        let mut len = 0usize;
+        while *p.add(len) != 0 {
+            len += 1;
+        }
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(p, len))
+    };
+
+    let value_name = if name_ptr == 0 {
+        ""
+    } else {
+        match unsafe { user_ptr_to_phys(name_ptr) } {
+            Some(p) => unsafe { guest_cstr(p, 256) },
+            None => return NtStatus::InvalidParameter,
+        }
+    };
+
+    let Some(value) = registry::get_value(key_path, value_name) else {
+        return NtStatus::ObjectNameNotFound;
+    };
+
+    let written = value.len.min(out_len);
+    if out_ptr != 0 && written > 0 {
+        match unsafe { user_ptr_to_phys(out_ptr) } {
+            Some(p) => unsafe {
+                core::ptr::copy_nonoverlapping(value.data.as_ptr(), p as *mut u8, written);
+            },
+            None => return NtStatus::InvalidParameter,
+        }
+    }
+    if ret_len_ptr != 0 {
+        if let Some(p) = unsafe { user_ptr_to_phys(ret_len_ptr) } {
+            unsafe { core::ptr::write_volatile(p as *mut u32, value.len as u32) };
+        }
+    }
+    NtStatus::Success
+}
+
+fn handle_create_process(args: [usize; 16]) -> NtStatus {
+    // Simplified bring-up ABI: args[0] = pointer to u64 receiving the handle.
+    let out_handle_ptr = args[0] as u64;
+    if out_handle_ptr == 0 {
+        return NtStatus::InvalidParameter;
+    }
+    let out_phys = match unsafe { user_ptr_to_phys(out_handle_ptr) } {
+        Some(p) => p,
+        None => return NtStatus::InvalidParameter,
+    };
+    let size = core::mem::size_of::<process::Process>();
+    let align = core::mem::align_of::<process::Process>();
+    let ptr = crate::mm::alloc_early(size, align);
+    let Some(ptr) = ptr else {
+        return NtStatus::InvalidParameter;
+    };
+    unsafe { core::ptr::write(ptr as *mut process::Process, process::Process::new(0)) };
+    let handle = match objects::allocate(objects::ObjectKind::Process, ptr as *mut ()) {
+        Some(h) => h,
+        None => return NtStatus::InvalidParameter,
+    };
+    unsafe { core::ptr::write_volatile(out_phys as *mut u64, handle.0 as u64) };
+    NtStatus::Success
+}
+
+fn handle_create_thread(args: [usize; 16]) -> NtStatus {
+    // Simplified bring-up ABI: args[0] = pointer to u64 receiving the handle.
+    let out_handle_ptr = args[0] as u64;
+    if out_handle_ptr == 0 {
+        return NtStatus::InvalidParameter;
+    }
+    let out_phys = match unsafe { user_ptr_to_phys(out_handle_ptr) } {
+        Some(p) => p,
+        None => return NtStatus::InvalidParameter,
+    };
+    let size = core::mem::size_of::<thread::Thread>();
+    let align = core::mem::align_of::<thread::Thread>();
+    let ptr = crate::mm::alloc_early(size, align);
+    let Some(ptr) = ptr else {
+        return NtStatus::InvalidParameter;
+    };
+    unsafe { core::ptr::write(ptr as *mut thread::Thread, thread::Thread::new(0, 0, 0)) };
+    let handle = match objects::allocate(objects::ObjectKind::Thread, ptr as *mut ()) {
+        Some(h) => h,
+        None => return NtStatus::InvalidParameter,
+    };
+    unsafe { core::ptr::write_volatile(out_phys as *mut u64, handle.0 as u64) };
+    NtStatus::Success
+}
+
+fn handle_set_information_process(_args: [usize; 16]) -> NtStatus {
+    // Accepted and acknowledged; the baseline process model has no mutable
+    // per-process information classes wired yet.
+    NtStatus::Success
+}
+
+fn handle_wait_for_multiple_objects(_args: [usize; 16]) -> NtStatus {
+    // No dispatchable waitable objects yet; yield the quantum and report
+    // success so callers do not spin in a hard loop.
+    crate::win32::scheduler::yield_current();
+    NtStatus::Success
+}
+
+/// Leak a 'static copy of `s` so an object handle can own it without a
+/// lifetime. Uses the early heap; the handle table never frees these.
+fn leak_str(s: &str) -> &'static str {
+    let buf = crate::mm::alloc_early(s.len(), 1).expect("nt leak_str alloc");
+    unsafe {
+        core::ptr::copy_nonoverlapping(s.as_ptr(), buf as *mut u8, s.len());
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(buf as *const u8, s.len()))
+    }
+}
+
+/// Phase 7 self-test: exercise the registry syscall path end-to-end.
+///
+/// Creates a registry key, sets a `REG_SZ` value, queries it back, and
+/// verifies the bytes round-trip intact. Runs in kernel context (cr3 == 0)
+/// so user pointers are identity-mapped.
+pub fn registry_self_test() -> bool {
+    use crate::mm::alloc_early;
+
+    // NtCreateKey: out handle + path.
+    let mut key_handle: u64 = 0;
+    let path = b"HKLM\\Software\\Aperture\0";
+    let path_phys = alloc_early(path.len(), 1).expect("regtest path");
+    unsafe { core::ptr::copy_nonoverlapping(path.as_ptr(), path_phys as *mut u8, path.len()) };
+    let create_status = dispatch(
+        SyscallNumber::NtCreateKey,
+        [
+            &mut key_handle as *mut u64 as usize,
+            path_phys as usize,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+    );
+    if create_status != NtStatus::Success || key_handle == 0 {
+        crate::logln!(
+            "reg: self_test FAIL create ({:?}, h={})",
+            create_status,
+            key_handle
+        );
+        return false;
+    }
+
+    // NtSetValueKey: value "Version" = "1.0.0" (REG_SZ).
+    let vname = b"Version\0";
+    let vname_phys = alloc_early(vname.len(), 1).expect("regtest vname");
+    unsafe { core::ptr::copy_nonoverlapping(vname.as_ptr(), vname_phys as *mut u8, vname.len()) };
+    let vdata = b"1.0.0";
+    let vdata_phys = alloc_early(vdata.len(), 1).expect("regtest vdata");
+    unsafe { core::ptr::copy_nonoverlapping(vdata.as_ptr(), vdata_phys as *mut u8, vdata.len()) };
+    let set_status = dispatch(
+        SyscallNumber::NtSetValueKey,
+        [
+            key_handle as usize,
+            vname_phys as usize,
+            1, // REG_SZ
+            vdata_phys as usize,
+            vdata.len(),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+    );
+    if set_status != NtStatus::Success {
+        crate::logln!("reg: self_test FAIL set {:?}", set_status);
+        return false;
+    }
+
+    // NtQueryValueKey: read it back.
+    let mut out_buf = [0u8; 32];
+    let mut out_len: u32 = 0;
+    let qname = b"Version\0";
+    let qname_phys = alloc_early(qname.len(), 1).expect("regtest qname");
+    unsafe { core::ptr::copy_nonoverlapping(qname.as_ptr(), qname_phys as *mut u8, qname.len()) };
+    let query_status = dispatch(
+        SyscallNumber::NtQueryValueKey,
+        [
+            key_handle as usize,
+            qname_phys as usize,
+            out_buf.as_mut_ptr() as usize,
+            out_buf.len(),
+            &mut out_len as *mut u32 as usize,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+    );
+    if query_status != NtStatus::Success {
+        crate::logln!("reg: self_test FAIL query {:?}", query_status);
+        return false;
+    }
+    let got = &out_buf[..(out_len as usize).min(out_buf.len())];
+    if got == b"1.0.0" {
+        crate::logln!(
+            "reg: self_test OK (Version={})",
+            core::str::from_utf8(got).unwrap_or("?")
+        );
+        true
+    } else {
+        crate::logln!("reg: self_test FAIL roundtrip len={}", out_len);
+        false
+    }
 }
 
 /// Open or create a file and return an object-manager handle.

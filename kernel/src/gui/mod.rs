@@ -90,4 +90,56 @@ pub fn clear_window(id: Option<WindowId>, color: Color) {
     }
 }
 
+// --- GDI drawing primitives (window-relative) -----------------------------
+
+pub fn gdi_set_pixel(id: WindowId, x: i32, y: i32, color: Color) {
+    if let Some(c) = COMPOSITOR.lock().as_mut() {
+        c.window_set_pixel(id, x, y, color);
+    }
+}
+
+pub fn gdi_draw_line(id: WindowId, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
+    if let Some(c) = COMPOSITOR.lock().as_mut() {
+        c.window_draw_line(id, x0, y0, x1, y1, color);
+    }
+}
+
+pub fn gdi_fill_rect(id: WindowId, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
+    if let Some(c) = COMPOSITOR.lock().as_mut() {
+        c.window_fill_rect(id, x0, y0, x1, y1, color);
+    }
+}
+
+pub fn gdi_draw_rect(id: WindowId, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
+    if let Some(c) = COMPOSITOR.lock().as_mut() {
+        c.window_draw_rect(id, x0, y0, x1, y1, color);
+    }
+}
+
+pub fn gdi_draw_ellipse(id: WindowId, cx: i32, cy: i32, rx: i32, ry: i32, color: Color) {
+    if let Some(c) = COMPOSITOR.lock().as_mut() {
+        c.window_draw_ellipse(id, cx, cy, rx, ry, color);
+    }
+}
+
+/// Phase 6 self-test: create a small window and render GDI primitives into it
+/// (filled rect, rectangle outline, line, ellipse, and a label). Returns
+/// `true` if the window was created and drawn. Verified by the boot log line
+/// and the visible shapes on the desktop.
+pub fn gdi_self_test() -> bool {
+    use color::Color;
+    let Some(id) = create_window("GDI", 40, 40, 160, 120) else {
+        crate::logln!("gdi: self_test FAIL no window");
+        return false;
+    };
+    clear_window(Some(id), Color::BLACK);
+    gdi_fill_rect(id, 4, 4, 60, 40, Color::new(0x20, 0x40, 0xA0));
+    gdi_draw_rect(id, 70, 4, 150, 40, Color::new(0xA0, 0xC0, 0x20));
+    gdi_draw_line(id, 4, 50, 150, 110, Color::new(0xE0, 0xE0, 0x20));
+    gdi_draw_ellipse(id, 110, 80, 40, 30, Color::new(0xE0, 0x40, 0x40));
+    draw_text(Some(id), "GDI", 6, 100, Color::WHITE);
+    crate::logln!("gdi: self_test OK (window {} drawn)", id.0);
+    true
+}
+
 pub use color::Color;

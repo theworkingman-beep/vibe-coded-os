@@ -88,3 +88,48 @@ impl Channel {
         }
     }
 }
+
+impl Default for MessagePort {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for Channel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Boot-time self-test for the IPC message-port path.
+///
+/// Exercises a real send/receive round-trip on a bidirectional channel and
+/// verifies the payload survives intact, plus the closed-port send-rejects
+/// behavior. Returns `true` on success. Called from the Win32 phase
+/// self-tests; never blocks.
+pub fn self_test() -> bool {
+    let chan = Channel::new();
+    let payload: &[u8] = b"aperture-ipc-ping";
+    if !chan.a_to_b.send(payload) {
+        crate::logln!("port: self_test FAIL send rejected");
+        return false;
+    }
+    let received = match chan.a_to_b.try_receive() {
+        Some(m) => m,
+        None => {
+            crate::logln!("port: self_test FAIL no message");
+            return false;
+        }
+    };
+    if received.as_slice() != payload {
+        crate::logln!("port: self_test FAIL payload mismatch");
+        return false;
+    }
+    chan.a_to_b.close();
+    if chan.a_to_b.send(b"after-close") {
+        crate::logln!("port: self_test FAIL send after close accepted");
+        return false;
+    }
+    crate::logln!("port: self_test OK ({}-byte round-trip)", payload.len());
+    true
+}
