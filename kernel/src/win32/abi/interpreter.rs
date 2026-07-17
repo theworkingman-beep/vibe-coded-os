@@ -5,8 +5,8 @@
 //! the mapped PE image and updates the guest PC. Hot code can later be
 //! promoted to the JIT.
 
-use crate::win32::thread::{Register, Thread};
 use crate::win32::nt::{self, SyscallNumber};
+use crate::win32::thread::{Register, Thread};
 
 /// Read a contiguous slice from guest memory.
 ///
@@ -52,8 +52,10 @@ pub unsafe fn run_x86_64_loop(entry: u64) -> ! {
                 });
             }
             Some(None) => {
-                crate::logln!("win32/abi: interpreter stopped at {:#x}",
-                    crate::win32::scheduler::with_current_thread(|t| t.user_rip).unwrap_or(0));
+                crate::logln!(
+                    "win32/abi: interpreter stopped at {:#x}",
+                    crate::win32::scheduler::with_current_thread(|t| t.user_rip).unwrap_or(0)
+                );
                 crate::hlt();
             }
             None => {
@@ -121,7 +123,8 @@ fn execute_instruction(t: &mut Thread, pc: u64, code: &[u8]) -> Option<u64> {
             if pos + 4 > code.len() {
                 return None;
             }
-            let offset = i32::from_le_bytes([code[pos], code[pos + 1], code[pos + 2], code[pos + 3]]) as i64;
+            let offset =
+                i32::from_le_bytes([code[pos], code[pos + 1], code[pos + 2], code[pos + 3]]) as i64;
             Some(pc.wrapping_add(pos as u64 + 4).wrapping_add(offset as u64))
         }
         // CALL rel32
@@ -129,7 +132,8 @@ fn execute_instruction(t: &mut Thread, pc: u64, code: &[u8]) -> Option<u64> {
             if pos + 4 > code.len() {
                 return None;
             }
-            let offset = i32::from_le_bytes([code[pos], code[pos + 1], code[pos + 2], code[pos + 3]]) as i64;
+            let offset =
+                i32::from_le_bytes([code[pos], code[pos + 1], code[pos + 2], code[pos + 3]]) as i64;
             let return_addr = pc.wrapping_add(pos as u64 + 4);
             let rsp = t.read_reg(Register::Rsp).wrapping_sub(8);
             t.write_reg(Register::Rsp, rsp);
@@ -144,8 +148,14 @@ fn execute_instruction(t: &mut Thread, pc: u64, code: &[u8]) -> Option<u64> {
                     return None;
                 }
                 let imm = u64::from_le_bytes([
-                    code[pos], code[pos + 1], code[pos + 2], code[pos + 3],
-                    code[pos + 4], code[pos + 5], code[pos + 6], code[pos + 7],
+                    code[pos],
+                    code[pos + 1],
+                    code[pos + 2],
+                    code[pos + 3],
+                    code[pos + 4],
+                    code[pos + 5],
+                    code[pos + 6],
+                    code[pos + 7],
                 ]);
                 t.write_reg(reg, imm);
                 Some(pc.wrapping_add(pos as u64 + 8))
@@ -153,7 +163,9 @@ fn execute_instruction(t: &mut Thread, pc: u64, code: &[u8]) -> Option<u64> {
                 if pos + 4 > code.len() {
                     return None;
                 }
-                let imm = u32::from_le_bytes([code[pos], code[pos + 1], code[pos + 2], code[pos + 3]]) as u64;
+                let imm =
+                    u32::from_le_bytes([code[pos], code[pos + 1], code[pos + 2], code[pos + 3]])
+                        as u64;
                 t.write_reg(reg, imm);
                 Some(pc.wrapping_add(pos as u64 + 4))
             }
@@ -169,11 +181,17 @@ fn execute_instruction(t: &mut Thread, pc: u64, code: &[u8]) -> Option<u64> {
             if reg_op != 0 {
                 return None; // not MOV /0
             }
-            let (new_pos, addr_or_reg) = decode_modrm_operand(t, pc, pos, code, mod_bits, rm, rex_b, rex_x, rex_r)?;
+            let (new_pos, addr_or_reg) =
+                decode_modrm_operand(t, pc, pos, code, mod_bits, rm, rex_b, rex_x, rex_r)?;
             if pos + 4 > code.len() {
                 return None;
             }
-            let imm = i32::from_le_bytes([code[new_pos], code[new_pos + 1], code[new_pos + 2], code[new_pos + 3]]) as u64;
+            let imm = i32::from_le_bytes([
+                code[new_pos],
+                code[new_pos + 1],
+                code[new_pos + 2],
+                code[new_pos + 3],
+            ]) as u64;
             let len = new_pos + 4;
             match addr_or_reg {
                 Operand::Reg(r) => t.write_reg(r, imm),
@@ -190,7 +208,8 @@ fn execute_instruction(t: &mut Thread, pc: u64, code: &[u8]) -> Option<u64> {
             pos += 1;
             let (mod_bits, reg_field, rm) = decode_modrm(modrm);
             let src = gpr(reg_field, rex_r);
-            let (new_pos, dst) = decode_modrm_operand(t, pc, pos, code, mod_bits, rm, rex_b, rex_x, rex_r)?;
+            let (new_pos, dst) =
+                decode_modrm_operand(t, pc, pos, code, mod_bits, rm, rex_b, rex_x, rex_r)?;
             let len = new_pos;
             match dst {
                 Operand::Reg(r) => {
@@ -213,7 +232,8 @@ fn execute_instruction(t: &mut Thread, pc: u64, code: &[u8]) -> Option<u64> {
             pos += 1;
             let (mod_bits, reg_field, rm) = decode_modrm(modrm);
             let dst = gpr(reg_field, rex_r);
-            let (new_pos, src) = decode_modrm_operand(t, pc, pos, code, mod_bits, rm, rex_b, rex_x, rex_r)?;
+            let (new_pos, src) =
+                decode_modrm_operand(t, pc, pos, code, mod_bits, rm, rex_b, rex_x, rex_r)?;
             let len = new_pos;
             match src {
                 Operand::Reg(r) => {
@@ -243,7 +263,8 @@ fn execute_instruction(t: &mut Thread, pc: u64, code: &[u8]) -> Option<u64> {
             if pos + 4 > code.len() {
                 return None;
             }
-            let disp = i32::from_le_bytes([code[pos], code[pos + 1], code[pos + 2], code[pos + 3]]) as i64;
+            let disp =
+                i32::from_le_bytes([code[pos], code[pos + 1], code[pos + 2], code[pos + 3]]) as i64;
             let len = pos + 4;
             let target = pc.wrapping_add(len as u64).wrapping_add(disp as u64);
             t.write_reg(dest, target);
@@ -311,7 +332,9 @@ fn decode_modrm_operand(
                 if pos + 4 > code.len() {
                     return None;
                 }
-                let disp = i32::from_le_bytes([code[pos], code[pos + 1], code[pos + 2], code[pos + 3]]) as i64;
+                let disp =
+                    i32::from_le_bytes([code[pos], code[pos + 1], code[pos + 2], code[pos + 3]])
+                        as i64;
                 let len = pos + 4;
                 let target = pc.wrapping_add(len as u64).wrapping_add(disp as u64);
                 Some((len, Operand::Addr(target)))

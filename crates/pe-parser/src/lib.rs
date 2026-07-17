@@ -136,7 +136,10 @@ pub fn data_directory(data: &[u8], image: &PeImage, index: usize) -> Option<Data
 
 /// Parse the import directory and return up to `MAX_IMPORT_DESCRIPTORS`
 /// entries. The returned array is terminated by the first `None` slot.
-pub fn parse_import_directory(data: &[u8], image: &PeImage) -> [Option<ImportDescriptor>; MAX_IMPORT_DESCRIPTORS] {
+pub fn parse_import_directory(
+    data: &[u8],
+    image: &PeImage,
+) -> [Option<ImportDescriptor>; MAX_IMPORT_DESCRIPTORS] {
     let mut out = [None; MAX_IMPORT_DESCRIPTORS];
     let Some(dir) = data_directory(data, image, 1) else {
         return out;
@@ -146,19 +149,27 @@ pub fn parse_import_directory(data: &[u8], image: &PeImage) -> [Option<ImportDes
     }
 
     let dir_offset = rva_to_file_offset(data, image, dir.rva as u64).unwrap_or(0);
-    for i in 0..MAX_IMPORT_DESCRIPTORS {
+    for (i, slot) in out.iter_mut().enumerate() {
         let entry_offset = dir_offset + i * 20;
         if entry_offset + 20 > data.len() {
             break;
         }
         let int_rva = u32::from_le_bytes(data[entry_offset..entry_offset + 4].try_into().unwrap());
-        let iat_rva = u32::from_le_bytes(data[entry_offset + 12..entry_offset + 16].try_into().unwrap());
-        let name_rva = u32::from_le_bytes(data[entry_offset + 16..entry_offset + 20].try_into().unwrap());
+        let iat_rva = u32::from_le_bytes(
+            data[entry_offset + 12..entry_offset + 16]
+                .try_into()
+                .unwrap(),
+        );
+        let name_rva = u32::from_le_bytes(
+            data[entry_offset + 16..entry_offset + 20]
+                .try_into()
+                .unwrap(),
+        );
         // The terminator has zero fields.
         if int_rva == 0 && iat_rva == 0 && name_rva == 0 {
             break;
         }
-        out[i] = Some(ImportDescriptor {
+        *slot = Some(ImportDescriptor {
             int_rva,
             iat_rva,
             name_rva,
@@ -169,12 +180,16 @@ pub fn parse_import_directory(data: &[u8], image: &PeImage) -> [Option<ImportDes
 
 /// Parse import thunks (PE32+ IAT/INT entries) at `rva`. Each entry is an
 /// 8-byte RVA or ordinal. The array terminates at the first zero entry.
-pub fn parse_import_thunks(data: &[u8], image: &PeImage, rva: u32) -> [Option<u64>; MAX_IMPORT_THUNKS] {
+pub fn parse_import_thunks(
+    data: &[u8],
+    image: &PeImage,
+    rva: u32,
+) -> [Option<u64>; MAX_IMPORT_THUNKS] {
     let mut out = [None; MAX_IMPORT_THUNKS];
     let Some(offset) = rva_to_file_offset(data, image, rva as u64) else {
         return out;
     };
-    for i in 0..MAX_IMPORT_THUNKS {
+    for (i, slot) in out.iter_mut().enumerate() {
         let entry_offset = offset + i * 8;
         if entry_offset + 8 > data.len() {
             break;
@@ -183,7 +198,7 @@ pub fn parse_import_thunks(data: &[u8], image: &PeImage, rva: u32) -> [Option<u6
         if value == 0 {
             break;
         }
-        out[i] = Some(value);
+        *slot = Some(value);
     }
     out
 }
@@ -268,13 +283,13 @@ mod tests {
         data[0x44..0x46].copy_from_slice(&0x8664u16.to_le_bytes()); // machine
         data[0x46..0x48].copy_from_slice(&1u16.to_le_bytes()); // sections
         data[0x54..0x56].copy_from_slice(&0xF0u16.to_le_bytes()); // optional header size
-        // Optional header
+                                                                  // Optional header
         data[0x58..0x5A].copy_from_slice(&0x20Bu16.to_le_bytes()); // magic PE32+
         data[0x68..0x6C].copy_from_slice(&0x1000u32.to_le_bytes()); // entry point RVA
         data[0x70..0x74].copy_from_slice(&0x10000u32.to_le_bytes()); // image base low
-        // Actually image base is 64-bit at offset 0x58+24 = 0x70
+                                                                     // Actually image base is 64-bit at offset 0x58+24 = 0x70
         data[0x70..0x78].copy_from_slice(&0x1_4000_0000u64.to_le_bytes()); // image base
-        // image size at optional header offset 0x38 -> 0x58+0x38 = 0x90
+                                                                           // image size at optional header offset 0x38 -> 0x58+0x38 = 0x90
         data[0x90..0x94].copy_from_slice(&0x2000u32.to_le_bytes());
         // NumberOfRvaAndSizes at offset 0x68 from optional header start
         data[0x58 + 0x68..0x58 + 0x6C].copy_from_slice(&16u32.to_le_bytes());
@@ -373,7 +388,10 @@ mod tests {
         let desc = dirs[0].unwrap();
         assert_eq!(desc.iat_rva, iat_rva);
         assert_eq!(desc.name_rva, name_rva);
-        assert_eq!(read_rva_string(&data, &image, name_rva), Some("kernel32.dll"));
+        assert_eq!(
+            read_rva_string(&data, &image, name_rva),
+            Some("kernel32.dll")
+        );
         assert!(dirs[1].is_none());
     }
 }

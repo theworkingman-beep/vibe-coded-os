@@ -2,9 +2,9 @@
 
 #![allow(static_mut_refs)]
 
-use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use x86_64::instructions::interrupts;
 use x86_64::instructions::port::Port;
+use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
 /// Programmable Interrupt Controller constants.
 const PIC1_COMMAND: u16 = 0x20;
@@ -40,11 +40,14 @@ pub fn init() {
         IDT.double_fault
             .set_handler_fn(double_fault_handler)
             .set_stack_index(1);
-        IDT.general_protection_fault.set_handler_fn(general_protection_handler);
+        IDT.general_protection_fault
+            .set_handler_fn(general_protection_handler);
         IDT.page_fault.set_handler_fn(page_fault_handler);
 
         // IRQ0: timer (naked preemptive context-switch handler).
-        IDT[32].set_handler_addr(x86_64::VirtAddr::new(timer_interrupt_naked as *const () as u64));
+        IDT[32].set_handler_addr(x86_64::VirtAddr::new(
+            timer_interrupt_naked as *const () as u64,
+        ));
         // IRQ1: keyboard
         IDT[33].set_handler_fn(keyboard_interrupt_handler);
         // IRQ12: mouse (PIC1 entry 44 = 32 + 12)
@@ -283,7 +286,12 @@ extern "x86-interrupt" fn page_fault_handler(
 ) {
     use x86_64::registers::control::Cr2;
     let addr = Cr2::read().unwrap_or(x86_64::VirtAddr::new_truncate(0));
-    crate::logln!("PAGE FAULT at {:#x}: {:#?} {:#?}", addr, error_code, stack_frame);
+    crate::logln!(
+        "PAGE FAULT at {:#x}: {:#?} {:#?}",
+        addr,
+        error_code,
+        stack_frame
+    );
 }
 
 /// Naked timer interrupt handler that performs preemptive context switching.

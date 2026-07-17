@@ -75,7 +75,11 @@ pub fn open() {
 
         INSTALL_BUTTON = Some(Button::new(Rect::new(20, 280, 120, 28), "Install"));
         CANCEL_BUTTON = Some(Button::new(Rect::new(160, 280, 120, 28), "Close"));
-        STATUS_LABEL = Some(Label::new(Rect::new(20, 240, 500, 20), "Select a target disk.", Color::WHITE));
+        STATUS_LABEL = Some(Label::new(
+            Rect::new(20, 240, 500, 20),
+            "Select a target disk.",
+            Color::WHITE,
+        ));
         PROGRESS = Some(ProgressBar::new(Rect::new(20, 210, 520, 20)));
 
         redraw();
@@ -124,7 +128,10 @@ pub fn update() {
         // every 5% of progress (or on state transitions) because the debug
         // build's per-pixel render is very slow.
         draw_frame(id);
-        let pct = PROGRESS.as_ref().map(|p| (p.progress * 100.0) as usize).unwrap_or(0);
+        let pct = PROGRESS
+            .as_ref()
+            .map(|p| (p.progress * 100.0) as usize)
+            .unwrap_or(0);
         static mut LAST_RENDER_PCT: usize = 101;
         if LAST_RENDER_PCT == 101 || pct >= LAST_RENDER_PCT + 5 || pct == 100 {
             LAST_RENDER_PCT = pct;
@@ -186,7 +193,9 @@ fn close() {
 
 fn start_install() {
     unsafe {
-        let Some(list) = LIST_BOX.as_ref() else { return };
+        let Some(list) = LIST_BOX.as_ref() else {
+            return;
+        };
         let Some((ptr, len)) = DISK_IMAGE else {
             set_status("No disk image available.");
             STATE = InstallerState::Error;
@@ -198,7 +207,9 @@ fn start_install() {
             crate::gui::request_render();
             return;
         };
-        let Some(info) = device_info(device) else { return };
+        let Some(info) = device_info(device) else {
+            return;
+        };
         let image_sectors = len / 512;
         if info.size_sectors < image_sectors as u64 {
             set_status("Target disk is too small.");
@@ -209,8 +220,15 @@ fn start_install() {
         if let Some(btn) = INSTALL_BUTTON.as_mut() {
             btn.enabled = false;
         }
-        crate::logln!("installer: starting write to device {} ({} bytes)", device, len);
-        STATE = InstallerState::Copying { device, done_bytes: 0 };
+        crate::logln!(
+            "installer: starting write to device {} ({} bytes)",
+            device,
+            len
+        );
+        STATE = InstallerState::Copying {
+            device,
+            done_bytes: 0,
+        };
         crate::gui::request_render();
         let _ = (ptr, len);
     }
@@ -218,7 +236,9 @@ fn start_install() {
 
 fn copy_chunk(device: usize, done_bytes: usize) -> usize {
     unsafe {
-        let Some((ptr, total)) = DISK_IMAGE else { return done_bytes };
+        let Some((ptr, total)) = DISK_IMAGE else {
+            return done_bytes;
+        };
         let remaining = total - done_bytes;
         if remaining == 0 {
             STATE = InstallerState::Done { device };
@@ -233,7 +253,10 @@ fn copy_chunk(device: usize, done_bytes: usize) -> usize {
         match write_sectors(device, lba, src) {
             Some(written) if written == chunk => {
                 let new_done = done_bytes + written;
-                STATE = InstallerState::Copying { device, done_bytes: new_done };
+                STATE = InstallerState::Copying {
+                    device,
+                    done_bytes: new_done,
+                };
                 if let Some(p) = PROGRESS.as_mut() {
                     p.progress = new_done as f32 / total as f32;
                 }
@@ -264,7 +287,9 @@ fn draw_frame(id: WindowId) {
     unsafe {
         let mut guard = COMPOSITOR.lock();
         let Some(c) = guard.as_mut() else { return };
-        let Some(window) = c.window_mut(id) else { return };
+        let Some(window) = c.window_mut(id) else {
+            return;
+        };
 
         if let Some(list) = LIST_BOX.as_ref() {
             list.draw(window);

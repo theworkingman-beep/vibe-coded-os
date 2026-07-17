@@ -237,7 +237,7 @@ pub unsafe fn init() {
     }
 }
 
-/// Reference to the aligned vector table symbol.
+// Reference to the aligned vector table symbol.
 extern "C" {
     fn aarch64_exception_vectors();
 }

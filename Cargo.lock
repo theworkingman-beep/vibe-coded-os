@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aarch64-decode"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "bit_field"
@@ -32,7 +32,7 @@ checksum = "413d67b29ef1021b4d60f4aa1e925ca031751e213832b4b1d588fae623c05c60"
 
 [[package]]
 name = "kernel"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aarch64-decode",
  "limine",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "pe-parser"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "raw-cpuid"
@@ -122,7 +122,7 @@ dependencies = [
 
 [[package]]
 name = "x86-decode"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "x86_64"

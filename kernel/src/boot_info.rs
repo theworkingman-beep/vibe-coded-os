@@ -3,8 +3,8 @@
 //! These types are populated from the Limine boot protocol responses in
 //! `kernel_main` and consumed by the architecture-independent kernel code.
 
-use limine::memmap;
 use limine::framebuffer::{Framebuffer, FRAMEBUFFER_RGB};
+use limine::memmap;
 
 /// Physical memory region reported by the bootloader/firmware.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

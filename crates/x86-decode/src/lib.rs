@@ -99,12 +99,8 @@ pub fn decode(code: &[u8]) -> DecodedInsn {
             if pos + 4 > code.len() {
                 return DecodedInsn::invalid();
             }
-            let offset = i32::from_le_bytes([
-                code[pos],
-                code[pos + 1],
-                code[pos + 2],
-                code[pos + 3],
-            ]) as i64;
+            let offset =
+                i32::from_le_bytes([code[pos], code[pos + 1], code[pos + 2], code[pos + 3]]) as i64;
             DecodedInsn {
                 len: pos + 4,
                 is_jmp: true,

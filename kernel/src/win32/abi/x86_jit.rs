@@ -17,6 +17,10 @@ pub fn translate_block(_guest_pc: u64, code: &[u8], _is_64bit: bool) -> Option<T
     Some(TranslationUnit {
         guest_entry: _guest_pc,
         host_entry: code.as_ptr() as *const (),
-        guest_arch: if _is_64bit { GuestArch::X86_64 } else { GuestArch::X86 },
+        guest_arch: if _is_64bit {
+            GuestArch::X86_64
+        } else {
+            GuestArch::X86
+        },
     })
 }

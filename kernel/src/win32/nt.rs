@@ -111,10 +111,22 @@ pub fn init_syscall_table() {
             (SyscallNumber::NtCreateFile, handle_create_file),
             (SyscallNumber::NtReadFile, handle_read_file),
             (SyscallNumber::NtWriteFile, handle_write_file),
-            (SyscallNumber::NtAllocateVirtualMemory, handle_allocate_virtual_memory),
-            (SyscallNumber::NtFreeVirtualMemory, handle_free_virtual_memory),
-            (SyscallNumber::NtQuerySystemInformation, handle_query_system_information),
-            (SyscallNumber::NtQueryInformationProcess, handle_query_information_process),
+            (
+                SyscallNumber::NtAllocateVirtualMemory,
+                handle_allocate_virtual_memory
+            ),
+            (
+                SyscallNumber::NtFreeVirtualMemory,
+                handle_free_virtual_memory
+            ),
+            (
+                SyscallNumber::NtQuerySystemInformation,
+                handle_query_system_information
+            ),
+            (
+                SyscallNumber::NtQueryInformationProcess,
+                handle_query_information_process
+            ),
             (SyscallNumber::NtDelayExecution, handle_delay_execution),
         );
     }
@@ -229,7 +241,9 @@ fn handle_allocate_virtual_memory(args: [usize; 16]) -> NtStatus {
                 // The synthetic test fixture places the output variable at an
                 // unaligned address; use unaligned write to tolerate it while
                 // still validating the ring-3 syscall round trip.
-                unsafe { base_ptr.write_unaligned(base); }
+                unsafe {
+                    base_ptr.write_unaligned(base);
+                }
             }
             NtStatus::Success
         }
@@ -394,11 +408,7 @@ pub fn close(handle: objects::Handle) -> NtStatus {
 }
 
 /// Open or create a VFS file node and return its raw VFS handle.
-fn open_vfs_file(
-    path: &str,
-    create: bool,
-    write_access: bool,
-) -> Result<FileHandle, NtStatus> {
+fn open_vfs_file(path: &str, create: bool, write_access: bool) -> Result<FileHandle, NtStatus> {
     let node = vfs::lookup(path);
     let node = match node {
         Some(n) => {
@@ -491,8 +501,8 @@ unsafe fn user_ptr_to_phys(addr: u64) -> Option<u64> {
     if addr == 0 {
         return None;
     }
-    let cr3 = crate::win32::scheduler::with_current_thread(|t| t.process_page_table_root)
-        .unwrap_or(0);
+    let cr3 =
+        crate::win32::scheduler::with_current_thread(|t| t.process_page_table_root).unwrap_or(0);
     if cr3 == 0 {
         return Some(addr);
     }

@@ -10,7 +10,13 @@
 /// # Safety
 /// Arguments must match the real NT syscall ABI for `number`.
 #[cfg(all(feature = "arch_x86_64", target_arch = "x86_64"))]
-pub unsafe fn syscall_4(number: usize, arg1: usize, arg2: usize, arg3: usize, arg4: usize) -> usize {
+pub unsafe fn syscall_4(
+    number: usize,
+    arg1: usize,
+    arg2: usize,
+    arg3: usize,
+    arg4: usize,
+) -> usize {
     let status: usize;
     core::arch::asm!(
         "mov r10, rdx",

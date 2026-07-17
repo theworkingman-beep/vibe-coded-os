@@ -146,12 +146,15 @@ pub fn enable_lapic() {
         // Ensure the local APIC is globally enabled in the APIC_BASE MSR.
         let (frame, raw) = ApicBase::read_raw();
         crate::logln!("lapic: apic_base raw={:#x}", raw);
-        let new_flags = (raw & !ApicBaseFlags::X2APIC_ENABLE.bits())
-            | ApicBaseFlags::LAPIC_ENABLE.bits();
+        let new_flags =
+            (raw & !ApicBaseFlags::X2APIC_ENABLE.bits()) | ApicBaseFlags::LAPIC_ENABLE.bits();
         ApicBase::write_raw(frame, new_flags);
 
         let base = phys_to_virt(LAPIC_BASE_PHYS) as *mut u32;
-        crate::logln!("lapic: id reg={:#x}", core::ptr::read_volatile(base.add(0x020 / 4)));
+        crate::logln!(
+            "lapic: id reg={:#x}",
+            core::ptr::read_volatile(base.add(0x020 / 4))
+        );
         // Task Priority Register: priority 0 (accept all interrupts).
         core::ptr::write_volatile(base.add(LAPIC_TPR_OFFSET / 4), 0);
         // Spurious Interrupt Vector Register: enable APIC, vector 0xFF.

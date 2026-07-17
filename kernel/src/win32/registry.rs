@@ -24,8 +24,7 @@ pub struct RegValue {
 
 const MAX_KEYS: usize = 256;
 
-static REGISTRY: Mutex<[Option<(&'static str, RegValue)>; MAX_KEYS]> =
-    Mutex::new([None; MAX_KEYS]);
+static REGISTRY: Mutex<[Option<(&'static str, RegValue)>; MAX_KEYS]> = Mutex::new([None; MAX_KEYS]);
 
 pub fn init() {
     // Default hive values can be pre-seeded here.
@@ -42,9 +41,16 @@ pub fn set_value(key: &str, value: &str, ty: RegValueType, data: &[u8]) -> bool 
     let len = data.len().min(256);
     value_data[..len].copy_from_slice(&data[..len]);
 
-    let entry = RegValue { ty, data: value_data, len };
+    let entry = RegValue {
+        ty,
+        data: value_data,
+        len,
+    };
 
-    if let Some(slot) = reg.iter_mut().find(|s| matches!(s, Some((k, _)) if *k == leaked)) {
+    if let Some(slot) = reg
+        .iter_mut()
+        .find(|s| matches!(s, Some((k, _)) if *k == leaked))
+    {
         *slot = Some((leaked, entry));
         true
     } else if let Some(slot) = reg.iter_mut().find(|s| s.is_none()) {

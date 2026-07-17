@@ -168,13 +168,20 @@ pub fn read(handle: FileHandle, buf: &mut [u8]) -> Option<usize> {
     while read < buf.len() && file.position < size {
         let frame_index = file.position / 4096;
         let frame_offset = file.position % 4096;
-        let to_read = min(buf.len() - read, min(4096 - frame_offset, size - file.position));
+        let to_read = min(
+            buf.len() - read,
+            min(4096 - frame_offset, size - file.position),
+        );
 
         let data = FILE_DATA.lock();
         if let Some(frame) = data[node][frame_index] {
             let src = hhdm::phys_to_virt(frame + frame_offset as u64) as *const u8;
             unsafe {
-                core::ptr::copy_nonoverlapping(src, buf[read..read + to_read].as_mut_ptr(), to_read);
+                core::ptr::copy_nonoverlapping(
+                    src,
+                    buf[read..read + to_read].as_mut_ptr(),
+                    to_read,
+                );
             }
         } else {
             // Sparse unallocated frame reads as zeros.
@@ -213,7 +220,11 @@ pub fn write(handle: FileHandle, buf: &[u8]) -> Option<usize> {
         let frame = data[node][frame_index].as_mut()?;
         let dst = hhdm::phys_to_virt(*frame + frame_offset as u64) as *mut u8;
         unsafe {
-            core::ptr::copy_nonoverlapping(buf[written..written + to_write].as_ptr(), dst, to_write);
+            core::ptr::copy_nonoverlapping(
+                buf[written..written + to_write].as_ptr(),
+                dst,
+                to_write,
+            );
         }
         drop(data);
 

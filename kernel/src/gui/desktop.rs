@@ -34,7 +34,9 @@ pub fn init(screen_width: i32, screen_height: i32) {
 
 /// Draw the desktop background and taskbar button.
 pub fn draw_desktop() {
-    let Some(desktop) = (unsafe { DESKTOP_WINDOW }) else { return };
+    let Some(desktop) = (unsafe { DESKTOP_WINDOW }) else {
+        return;
+    };
     let _ = desktop; // used to identify the desktop window later.
 
     // The desktop window covers the whole screen. We render the taskbar by
@@ -45,7 +47,14 @@ pub fn draw_desktop() {
 
 fn draw_taskbar(desktop: WindowId) {
     // Taskbar background at the top.
-    fill_rect(desktop, 0, 0, desktop_bounds().0, TASKBAR_HEIGHT, Color::new(0x10, 0x10, 0x10));
+    fill_rect(
+        desktop,
+        0,
+        0,
+        desktop_bounds().0,
+        TASKBAR_HEIGHT,
+        Color::new(0x10, 0x10, 0x10),
+    );
 
     // Terminal button.
     draw_taskbar_button(desktop, TERMINAL_X, "Terminal");
@@ -54,8 +63,22 @@ fn draw_taskbar(desktop: WindowId) {
 }
 
 fn draw_taskbar_button(desktop: WindowId, x: i32, label: &str) {
-    fill_rect(desktop, x, BUTTON_Y, x + BUTTON_WIDTH, BUTTON_Y + BUTTON_HEIGHT, Color::new(0x40, 0x40, 0x40));
-    draw_rect(desktop, x, BUTTON_Y, x + BUTTON_WIDTH, BUTTON_Y + BUTTON_HEIGHT, Color::WHITE);
+    fill_rect(
+        desktop,
+        x,
+        BUTTON_Y,
+        x + BUTTON_WIDTH,
+        BUTTON_Y + BUTTON_HEIGHT,
+        Color::new(0x40, 0x40, 0x40),
+    );
+    draw_rect(
+        desktop,
+        x,
+        BUTTON_Y,
+        x + BUTTON_WIDTH,
+        BUTTON_Y + BUTTON_HEIGHT,
+        Color::WHITE,
+    );
     let pad_x = (BUTTON_WIDTH - (label.len() as i32 * 6)) / 2;
     draw_text(Some(desktop), label, x + pad_x, BUTTON_Y + 7, Color::WHITE);
 }
@@ -77,10 +100,24 @@ pub fn handle_mouse() -> bool {
     unsafe {
         if left_down && !BUTTON_DOWN_LAST {
             // Rising edge: check hits on taskbar buttons.
-            if point_in_rect(mx, my, TERMINAL_X, BUTTON_Y, TERMINAL_X + BUTTON_WIDTH, BUTTON_Y + BUTTON_HEIGHT) {
+            if point_in_rect(
+                mx,
+                my,
+                TERMINAL_X,
+                BUTTON_Y,
+                TERMINAL_X + BUTTON_WIDTH,
+                BUTTON_Y + BUTTON_HEIGHT,
+            ) {
                 open_terminal();
                 clicked = true;
-            } else if point_in_rect(mx, my, INSTALL_X, BUTTON_Y, INSTALL_X + BUTTON_WIDTH, BUTTON_Y + BUTTON_HEIGHT) {
+            } else if point_in_rect(
+                mx,
+                my,
+                INSTALL_X,
+                BUTTON_Y,
+                INSTALL_X + BUTTON_WIDTH,
+                BUTTON_Y + BUTTON_HEIGHT,
+            ) {
                 installer::open();
                 clicked = true;
             }
@@ -209,7 +246,9 @@ fn draw_rect(window: WindowId, x0: i32, y0: i32, x1: i32, y1: i32, color: Color)
 fn write_pixel(window: WindowId, x: i32, y: i32, color: Color) {
     let mut guard = COMPOSITOR.lock();
     let Some(c) = guard.as_mut() else { return };
-    let Some(w) = c.window_mut(window) else { return };
+    let Some(w) = c.window_mut(window) else {
+        return;
+    };
     if x < 0 || y < 0 || x >= w.width || y >= w.height {
         return;
     }

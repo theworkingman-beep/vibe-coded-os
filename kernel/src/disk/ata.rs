@@ -16,9 +16,15 @@ struct Channel {
 }
 
 #[cfg(feature = "arch_x86_64")]
-const PRIMARY: Channel = Channel { base: 0x1F0, control: 0x3F6 };
+const PRIMARY: Channel = Channel {
+    base: 0x1F0,
+    control: 0x3F6,
+};
 #[cfg(feature = "arch_x86_64")]
-const SECONDARY: Channel = Channel { base: 0x170, control: 0x376 };
+const SECONDARY: Channel = Channel {
+    base: 0x170,
+    control: 0x376,
+};
 
 #[cfg(feature = "arch_x86_64")]
 fn select_device(channel: &Channel, master: bool) {
@@ -107,7 +113,12 @@ fn identify(channel: &Channel, master: bool) -> Option<BlockDeviceInfo> {
     }
 
     let lba_sectors = ((buf[61] as u32) << 16) | (buf[60] as u32);
-    crate::logln!("ata: {} {} sectors ({} MiB)", if master { "master" } else { "slave" }, lba_sectors, lba_sectors * 512 / 1024 / 1024);
+    crate::logln!(
+        "ata: {} {} sectors ({} MiB)",
+        if master { "master" } else { "slave" },
+        lba_sectors,
+        lba_sectors * 512 / 1024 / 1024
+    );
     Some(BlockDeviceInfo {
         index: 0,
         model,
@@ -154,9 +165,8 @@ pub fn read_sectors(device: usize, lba: u64, buf: &mut [u8]) -> Option<()> {
         Port::<u8>::new(channel.base + 3).write((lba & 0xFF) as u8);
         Port::<u8>::new(channel.base + 4).write(((lba >> 8) & 0xFF) as u8);
         Port::<u8>::new(channel.base + 5).write(((lba >> 16) & 0xFF) as u8);
-        Port::<u8>::new(channel.base + 6).write(
-            (if master { 0xE0 } else { 0xF0 }) | (((lba >> 24) & 0x0F) as u8),
-        );
+        Port::<u8>::new(channel.base + 6)
+            .write((if master { 0xE0 } else { 0xF0 }) | (((lba >> 24) & 0x0F) as u8));
         Port::<u8>::new(channel.base + 7).write(0x20);
     }
 
@@ -173,7 +183,6 @@ pub fn read_sectors(device: usize, lba: u64, buf: &mut [u8]) -> Option<()> {
     }
     Some(())
 }
-
 
 /// Write sectors using 28-bit LBA PIO.
 #[cfg(feature = "arch_x86_64")]
@@ -192,9 +201,8 @@ pub fn write_sectors(device: usize, lba: u64, buf: &[u8]) -> Option<()> {
         Port::<u8>::new(channel.base + 3).write((lba & 0xFF) as u8);
         Port::<u8>::new(channel.base + 4).write(((lba >> 8) & 0xFF) as u8);
         Port::<u8>::new(channel.base + 5).write(((lba >> 16) & 0xFF) as u8);
-        Port::<u8>::new(channel.base + 6).write(
-            (if master { 0xE0 } else { 0xF0 }) | (((lba >> 24) & 0x0F) as u8),
-        );
+        Port::<u8>::new(channel.base + 6)
+            .write((if master { 0xE0 } else { 0xF0 }) | (((lba >> 24) & 0x0F) as u8));
         Port::<u8>::new(channel.base + 7).write(0x30);
     }
 
@@ -234,6 +242,10 @@ fn device_channel(device: usize) -> Option<(&'static Channel, bool)> {
 #[cfg(not(feature = "arch_x86_64"))]
 pub fn probe_disks(_out: &mut [Option<BlockDeviceInfo>; 4]) {}
 #[cfg(not(feature = "arch_x86_64"))]
-pub fn read_sectors(_device: usize, _lba: u64, _buf: &mut [u8]) -> Option<()> { None }
+pub fn read_sectors(_device: usize, _lba: u64, _buf: &mut [u8]) -> Option<()> {
+    None
+}
 #[cfg(not(feature = "arch_x86_64"))]
-pub fn write_sectors(_device: usize, _lba: u64, _buf: &[u8]) -> Option<()> { None }
+pub fn write_sectors(_device: usize, _lba: u64, _buf: &[u8]) -> Option<()> {
+    None
+}

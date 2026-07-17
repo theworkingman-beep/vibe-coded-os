@@ -13,8 +13,11 @@
 extern crate alloc;
 
 use limine::{
-    request::{EntryPointRequest, FramebufferRequest, HhdmRequest, MemmapRequest, ModulesRequest, PagingModeRequest, RsdpRequest, StackSizeRequest},
     paging::PagingMode,
+    request::{
+        EntryPointRequest, FramebufferRequest, HhdmRequest, MemmapRequest, ModulesRequest,
+        PagingModeRequest, RsdpRequest, StackSizeRequest,
+    },
     BaseRevision, RequestsEndMarker, RequestsStartMarker,
 };
 
@@ -74,16 +77,16 @@ extern "C" fn _start() -> ! {
     // Establish the higher-half direct map first: Limine does not identity-map
     // physical memory, so any physical address we dereference as a pointer
     // (including the AArch64 PL011 UART MMIO) must go through the HHDM.
-    let hhdm = HHDM_REQUEST
-        .response()
-        .map(|r| r.offset)
-        .unwrap_or(0);
+    let hhdm = HHDM_REQUEST.response().map(|r| r.offset).unwrap_or(0);
     kernel::mm::hhdm::set_offset(hhdm);
 
     #[cfg(feature = "arch_aarch64")]
     {
-        kernel::arch::semihost_putchar(b'S');
-        kernel::arch::semihost_putchar(b'\n');
+        // Early PL011 banner: confirm the UART path works before any
+        // subsystem init. Semihosting is intentionally avoided so the kernel
+        // boots under the documented QEMU command (no `-semihosting`).
+        kernel::arch::debug_putchar(b'A');
+        kernel::arch::debug_putchar(b'\n');
     }
     kernel::arch::debug_putchar(b'K');
     kernel::arch::debug_putchar(b'\n');
@@ -143,8 +146,14 @@ extern "C" fn _start() -> ! {
             size / 1024 / 1024
         );
     }
-    kernel::logln!("Aperture OS {} kernel booting...",
-        if cfg!(feature = "arch_x86_64") { "x86_64" } else { "AArch64" });
+    kernel::logln!(
+        "Aperture OS {} kernel booting...",
+        if cfg!(feature = "arch_x86_64") {
+            "x86_64"
+        } else {
+            "AArch64"
+        }
+    );
     kernel::logln!("HHDM offset: {:#x}", hhdm);
 
     if let Some(rsdp) = RSDP_REQUEST.response() {
@@ -200,12 +209,16 @@ extern "C" fn _start() -> ! {
             let info = kernel::boot_info::FrameBufferInfo::from_limine(fb);
             let len = fb.size();
             let fb_addr = fb.address() as usize;
-            kernel::logln!("fb addr={:#x} len={} bpp={} stride={}", fb_addr, len, info.bytes_per_pixel, info.stride);
+            kernel::logln!(
+                "fb addr={:#x} len={} bpp={} stride={}",
+                fb_addr,
+                len,
+                info.bytes_per_pixel,
+                info.stride
+            );
             // Limine already exposes the framebuffer as a virtual pointer; do
             // not translate it through the HHDM.
-            let buffer = unsafe {
-                core::slice::from_raw_parts_mut(fb_addr as *mut u8, len)
-            };
+            let buffer = unsafe { core::slice::from_raw_parts_mut(fb_addr as *mut u8, len) };
             unsafe {
                 kernel::panic::register_framebuffer(buffer.as_mut_ptr(), len, info);
             }

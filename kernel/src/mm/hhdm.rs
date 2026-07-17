@@ -36,6 +36,10 @@ pub fn phys_to_virt(phys: u64) -> u64 {
 /// Panics if the address is not within the HHDM range.
 pub fn virt_to_phys(virt: u64) -> u64 {
     let off = offset();
-    assert!(virt >= off, "virt_to_phys: address {:#x} is not in HHDM", virt);
+    assert!(
+        virt >= off,
+        "virt_to_phys: address {:#x} is not in HHDM",
+        virt
+    );
     virt - off
 }

@@ -29,7 +29,9 @@ cargo build -p kernel --no-default-features --features "$FEATURES" \
     --target "$TARGET"
 
 KERNEL_ELF="target/$TARGET/debug/kernel"
-ISO_IMAGE="target/aperture-${ARCH}.iso"
+# Phase 11 expects the release artifact at build/ApertureOS-<arch>.iso.
+mkdir -p build
+ISO_IMAGE="build/ApertureOS-${ARCH}.iso"
 
 echo "Building Limine boot image..."
 tools/build-image.sh "$ARCH" "$KERNEL_ELF" "$ISO_IMAGE"

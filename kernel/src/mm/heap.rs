@@ -87,7 +87,8 @@ impl Heap {
             let index = Self::class_index(size);
             let block_size = Self::class_size(index);
             if let Some(block) = self.classes[index].pop() {
-                self.total_allocated.fetch_add(block_size, Ordering::Relaxed);
+                self.total_allocated
+                    .fetch_add(block_size, Ordering::Relaxed);
                 return block as *mut u8;
             }
 
@@ -104,7 +105,8 @@ impl Heap {
                 let block = page.add(i * block_size) as *mut FreeBlock;
                 self.classes[index].push(block);
             }
-            self.total_allocated.fetch_add(block_size, Ordering::Relaxed);
+            self.total_allocated
+                .fetch_add(block_size, Ordering::Relaxed);
             page
         } else {
             // Large allocation: allocate whole pages directly.
@@ -150,7 +152,10 @@ impl Heap {
             // Large deallocation: would need a side table to recover page count.
             // For this incremental Phase 2 implementation we leak large pages to
             // avoid unsafe assumptions about contiguity.
-            crate::logln!("heap: large deallocation at {:?} leaked (no side table)", ptr);
+            crate::logln!(
+                "heap: large deallocation at {:?} leaked (no side table)",
+                ptr
+            );
         }
     }
 }

@@ -21,7 +21,7 @@ jobs:
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rust-src, llvm-tools-preview
+          components: rust-src, llvm-tools-preview, rustfmt, clippy
 
       - name: Cache Limine binaries
         uses: actions/cache@v4
@@ -40,7 +40,7 @@ jobs:
       - name: Boot test x86_64 ISO in QEMU/SeaBIOS
         run: |
           timeout 60s qemu-system-x86_64 \
-            -cdrom target/aperture-x86_64.iso -boot d \
+            -cdrom build/ApertureOS-x86_64.iso -boot d \
             -m 512 -smp 1 -serial file:/tmp/qemu-bios.log -display none \
             2>&1 || true
           echo "--- BIOS boot log ---"
@@ -66,7 +66,7 @@ jobs:
           timeout 60s qemu-system-x86_64 \
             -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
             -drive if=pflash,format=raw,file=/tmp/ovmf_vars.fd \
-            -cdrom target/aperture-x86_64.iso -boot d \
+            -cdrom build/ApertureOS-x86_64.iso -boot d \
             -m 512 -smp 1 -serial file:/tmp/qemu-uefi.log -display none \
             2>&1 || true
           echo "--- UEFI boot log ---"
@@ -79,7 +79,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aperture-os-x86_64-iso
-          path: target/aperture-x86_64.iso
+          path: build/ApertureOS-x86_64.iso
           if-no-files-found: error
 
   build-aarch64:
@@ -92,7 +92,7 @@ jobs:
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rust-src, llvm-tools-preview
+          components: rust-src, llvm-tools-preview, rustfmt, clippy
 
       - name: Cache Limine binaries
         uses: actions/cache@v4
@@ -111,13 +111,18 @@ jobs:
       - name: Boot test AArch64 ISO in QEMU/virt with UEFI
         run: |
           cp /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /tmp/aarch64_efi.fd
+          # The AArch64 early console uses QEMU semihosting (SYS_WRITEC)
+          # until the kernel programs its own MMU to map the PL011 UART, so
+          # capture QEMU stdout+stderr (where semihosting lands) in addition
+          # to the serial file. -device ramfb gives UEFI GOP a framebuffer.
           timeout 60s qemu-system-aarch64 \
             -machine virt -cpu cortex-a72 -m 512 \
             -bios /tmp/aarch64_efi.fd \
-            -cdrom target/aperture-aarch64.iso -boot d \
-            -serial file:/tmp/qemu-aarch64.log -display none \
-            -device ramfb -semihosting \
-            2>&1 || true
+            -cdrom build/ApertureOS-aarch64.iso -boot d \
+            -serial file:/tmp/qemu-aarch64.log -monitor none \
+            -device ramfb -semihosting -display none \
+            > /tmp/qemu-aarch64-stdout.log 2>&1 || true
+          cat /tmp/qemu-aarch64-stdout.log >> /tmp/qemu-aarch64.log || true
           echo "--- AArch64 UEFI boot log ---"
           tail -40 /tmp/qemu-aarch64.log
           if grep -q "Aperture OS AArch64 kernel booting" /tmp/qemu-aarch64.log && \
@@ -131,18 +136,11 @@ jobs:
       - name: Run host tests
         run: cargo test -p x86-decode -p pe-parser -p aarch64-decode
 
-      - name: Upload AArch64 kernel ELF
+      - name: Upload AArch64 ISO
         uses: actions/upload-artifact@v4
         with:
-          name: aperture-os-aarch64-kernel-elf
-          path: target/aarch64-unknown-none/debug/kernel
-          if-no-files-found: error
-
-      - name: Upload AArch64 boot image
-        uses: actions/upload-artifact@v4
-        with:
-          name: aperture-os-aarch64-boot-image
-          path: target/aperture-aarch64.iso
+          name: aperture-os-aarch64-iso
+          path: build/ApertureOS-aarch64.iso
           if-no-files-found: error
 
   release:
@@ -157,16 +155,10 @@ jobs:
           name: aperture-os-x86_64-iso
           path: release/
 
-      - name: Download AArch64 kernel ELF
+      - name: Download AArch64 ISO
         uses: actions/download-artifact@v4
         with:
-          name: aperture-os-aarch64-kernel-elf
-          path: release/
-
-      - name: Download AArch64 boot image
-        uses: actions/download-artifact@v4
-        with:
-          name: aperture-os-aarch64-boot-image
+          name: aperture-os-aarch64-iso
           path: release/
 
       - name: Compute nightly timestamp
@@ -177,9 +169,8 @@ jobs:
 
       - name: Rename assets with timestamp
         run: |
-          mv release/aperture-x86_64.iso "release/aperture-os-x86_64-${RELEASE_TS}.iso"
-          mv release/kernel "release/aperture-os-aarch64-${RELEASE_TS}.elf"
-          mv release/aperture-aarch64.iso "release/aperture-os-aarch64-${RELEASE_TS}.iso"
+          mv release/ApertureOS-x86_64.iso "release/aperture-os-x86_64-${RELEASE_TS}.iso"
+          mv release/ApertureOS-aarch64.iso "release/aperture-os-aarch64-${RELEASE_TS}.iso"
         env:
           RELEASE_TS: ${{ steps.ts.outputs.ts }}
 
@@ -194,6 +185,5 @@ jobs:
             Assets:
             - `aperture-os-x86_64-${{ steps.ts.outputs.ts }}.iso` — hybrid BIOS+UEFI bootable ISO
             - `aperture-os-aarch64-${{ steps.ts.outputs.ts }}.iso` — AArch64 UEFI bootable ISO
-            - `aperture-os-aarch64-${{ steps.ts.outputs.ts }}.elf` — AArch64 kernel ELF
           files: release/*
           prerelease: true

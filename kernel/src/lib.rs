@@ -1,6 +1,11 @@
 #![no_std]
 #![cfg_attr(all(feature = "arch_x86_64", test), no_main)]
 #![cfg_attr(feature = "arch_x86_64", feature(abi_x86_interrupt))]
+// ApertureOS is an in-development OS kernel. A number of register constants,
+// driver methods, and ABI fields are defined ahead of the phases that wire
+// them up; silence dead-code lints crate-wide rather than scattering
+// per-item allows across the scaffolding.
+#![allow(dead_code)]
 
 extern crate alloc;
 

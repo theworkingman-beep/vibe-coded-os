@@ -2,6 +2,9 @@
 target/
 Cargo.lock
 
+# Release / ISO build artifacts (uploaded as GitHub release assets, not committed)
+build/
+
 # Python cache
 tools/__pycache__/
 *.pyc

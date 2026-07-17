@@ -82,12 +82,12 @@ fn x86_64_raw_user_test() {
     let code_ptr = phys_to_virt(code_phys) as *mut u8;
     let code: &[u8] = &[
         0x48, 0xc7, 0xc0, 0x36, 0x00, 0x00, 0x00, // mov rax, 0x36
-        0x48, 0x31, 0xff,                         // xor rdi, rdi
-        0x48, 0x31, 0xf6,                         // xor rsi, rsi
-        0x48, 0x31, 0xd2,                         // xor rdx, rdx
-        0x49, 0x31, 0xd2,                         // xor r10, r10
-        0x0f, 0x05,                               // syscall
-        0xeb, 0xfe,                               // jmp $
+        0x48, 0x31, 0xff, // xor rdi, rdi
+        0x48, 0x31, 0xf6, // xor rsi, rsi
+        0x48, 0x31, 0xd2, // xor rdx, rdx
+        0x49, 0x31, 0xd2, // xor r10, r10
+        0x0f, 0x05, // syscall
+        0xeb, 0xfe, // jmp $
     ];
     unsafe {
         core::ptr::write_bytes(code_ptr, 0, 4096);
@@ -99,21 +99,29 @@ fn x86_64_raw_user_test() {
         return;
     };
     unsafe {
-        pt.map(USER_CODE_VIRT, code_phys, PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
+        pt.map(
+            USER_CODE_VIRT,
+            code_phys,
+            PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE,
+        );
     }
     let cr3 = pt.cr3();
 
     crate::logln!(
         "win32: raw user test code={:#x} cr3={:#x} entry={:#x}",
-        code_phys, cr3, USER_ENTRY
+        code_phys,
+        cr3,
+        USER_ENTRY
     );
 
-    let slot = scheduler::create_thread(1, USER_ENTRY, cr3)
-        .expect("create user test thread");
+    let slot = scheduler::create_thread(1, USER_ENTRY, cr3).expect("create user test thread");
     let thread = scheduler::thread(slot).expect("lookup user test thread");
     crate::logln!(
         "win32: raw user thread tid={} entry={:#x} slot={} cr3={:#x}",
-        thread.tid, thread.entry_point, slot, cr3
+        thread.tid,
+        thread.entry_point,
+        slot,
+        cr3
     );
 
     unsafe {

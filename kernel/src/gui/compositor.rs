@@ -73,17 +73,19 @@ impl Compositor {
             backbuffer,
             pixel_count
         );
-        crate::arch::without_interrupts(|| {
-            unsafe {
-                core::slice::from_raw_parts_mut(backbuffer, pixel_count).fill(Color::WHITE);
-            }
+        crate::arch::without_interrupts(|| unsafe {
+            core::slice::from_raw_parts_mut(backbuffer, pixel_count).fill(Color::WHITE);
         });
 
         let mut title_buf = [0u8; 64];
         let len = title.len().min(63);
         title_buf[..len].copy_from_slice(&title.as_bytes()[..len]);
 
-        let slot = self.windows.iter_mut().find(|w| w.is_none()).expect("Too many windows");
+        let slot = self
+            .windows
+            .iter_mut()
+            .find(|w| w.is_none())
+            .expect("Too many windows");
         *slot = Some(Window {
             id,
             title: title_buf,
@@ -102,7 +104,8 @@ impl Compositor {
     /// Fill the window backbuffer with `color`.
     pub fn clear_window(&mut self, id: WindowId, color: Color) {
         if let Some(window) = self.window_mut(id) {
-            let pixels = unsafe { core::slice::from_raw_parts_mut(window.backbuffer, window.pixel_count) };
+            let pixels =
+                unsafe { core::slice::from_raw_parts_mut(window.backbuffer, window.pixel_count) };
             pixels.fill(color);
         }
     }
@@ -130,7 +133,6 @@ impl Compositor {
             }
         }
     }
-
 
     fn clear(&mut self, color: Color) {
         let width = self.info.width;
@@ -163,10 +165,14 @@ impl Compositor {
                 continue;
             }
             let src_row = unsafe {
-                core::slice::from_raw_parts(window.backbuffer.add(local_y as usize * win_width), win_width)
+                core::slice::from_raw_parts(
+                    window.backbuffer.add(local_y as usize * win_width),
+                    win_width,
+                )
             };
             let dst_row_start = global_y as usize * stride + window.x as usize * bytes_per_pixel;
-            let dst_row = &mut buf[dst_row_start..dst_row_start + window.width as usize * bytes_per_pixel];
+            let dst_row =
+                &mut buf[dst_row_start..dst_row_start + window.width as usize * bytes_per_pixel];
 
             for local_x in 0..window.width as usize {
                 let src = src_row[local_x];

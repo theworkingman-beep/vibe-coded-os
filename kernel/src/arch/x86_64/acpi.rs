@@ -55,20 +55,15 @@ fn validate_checksum(bytes: &[u8]) -> bool {
 /// `rsdp_virt` must point to a valid ACPI RSDP structure.
 pub unsafe fn init(rsdp_virt: u64) {
     let rsdp_virt = rsdp_virt as *const Rsdp;
-    let signature = core::slice::from_raw_parts(
-        core::ptr::addr_of!((*rsdp_virt).signature) as *const u8,
-        8,
-    );
+    let signature =
+        core::slice::from_raw_parts(core::ptr::addr_of!((*rsdp_virt).signature) as *const u8, 8);
     if signature != b"RSD PTR " {
         logln!("acpi: invalid RSDP signature");
         return;
     }
 
     let revision = read_u8(core::ptr::addr_of!((*rsdp_virt).revision) as *const u8);
-    let oem = core::slice::from_raw_parts(
-        core::ptr::addr_of!((*rsdp_virt).oem_id) as *const u8,
-        6,
-    );
+    let oem = core::slice::from_raw_parts(core::ptr::addr_of!((*rsdp_virt).oem_id) as *const u8, 6);
     logln!("acpi: RSDP revision={} oem={:?}", revision, oem);
 
     let valid = if revision >= 2 {
@@ -88,7 +83,8 @@ pub unsafe fn init(rsdp_virt: u64) {
         let xsdt_phys = read_u64(core::ptr::addr_of!((*rsdp_virt).xsdt_address) as *const u8);
         parse_sdt_root(xsdt_phys, true);
     } else {
-        let rsdt_phys = read_u32(core::ptr::addr_of!((*rsdp_virt).rsdt_address) as *const u8) as u64;
+        let rsdt_phys =
+            read_u32(core::ptr::addr_of!((*rsdp_virt).rsdt_address) as *const u8) as u64;
         parse_sdt_root(rsdt_phys, false);
     }
 }
@@ -107,11 +103,20 @@ fn sdt_header(virt: usize) -> Option<([u8; 4], u32, u8)> {
 fn parse_sdt_root(root_phys: u64, is_xsdt: bool) {
     let virt = phys_to_virt(root_phys) as usize;
     let Some((sig, len, revision)) = sdt_header(virt) else {
-        logln!("acpi: {} checksum invalid", if is_xsdt { "XSDT" } else { "RSDT" });
+        logln!(
+            "acpi: {} checksum invalid",
+            if is_xsdt { "XSDT" } else { "RSDT" }
+        );
         return;
     };
     let kind = if is_xsdt { "XSDT" } else { "RSDT" };
-    logln!("acpi: {} sig={:?} len={} revision={}", kind, sig, len, revision);
+    logln!(
+        "acpi: {} sig={:?} len={} revision={}",
+        kind,
+        sig,
+        len,
+        revision
+    );
 
     let entries_start = virt + 36;
     let entry_size = if is_xsdt { 8 } else { 4 };

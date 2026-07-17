@@ -19,7 +19,11 @@ pub fn self_test() {
     ];
     for opcode in opcodes {
         let instr = decode(opcode);
-        crate::logln!("aarch64-interpreter: decoded {:#010x} -> {:?}", opcode, instr);
+        crate::logln!(
+            "aarch64-interpreter: decoded {:#010x} -> {:?}",
+            opcode,
+            instr
+        );
     }
 }
 
@@ -40,7 +44,12 @@ pub unsafe fn run_aarch64_loop(entry: u64) -> ! {
         let opcode = u32::from_le_bytes([code[0], code[1], code[2], code[3]]);
         let instr = decode(opcode);
 
-        crate::logln!("aarch64-interpreter: {:#x}: {:#010x} -> {:?}", pc, opcode, instr);
+        crate::logln!(
+            "aarch64-interpreter: {:#x}: {:#010x} -> {:?}",
+            pc,
+            opcode,
+            instr
+        );
 
         match instr {
             Instruction::Nop => {

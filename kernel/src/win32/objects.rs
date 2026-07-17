@@ -40,14 +40,18 @@ impl ObjectHeader {
 unsafe impl Send for ObjectHeader {}
 unsafe impl Sync for ObjectHeader {}
 
-static HANDLE_TABLE: Mutex<[Option<ObjectHeader>; MAX_HANDLES]> = Mutex::new([const { None }; MAX_HANDLES]);
+static HANDLE_TABLE: Mutex<[Option<ObjectHeader>; MAX_HANDLES]> =
+    Mutex::new([const { None }; MAX_HANDLES]);
 static NEXT_HANDLE: AtomicU32 = AtomicU32::new(1);
 
 /// Allocate a handle for `object`.
 pub fn allocate(kind: ObjectKind, data: *mut ()) -> Option<Handle> {
     let mut table = HANDLE_TABLE.lock();
     let index = table.iter().position(|slot| slot.is_none())?;
-    table[index] = Some(ObjectHeader { kind, data: data as usize });
+    table[index] = Some(ObjectHeader {
+        kind,
+        data: data as usize,
+    });
     Some(Handle(NEXT_HANDLE.fetch_add(1, Ordering::Relaxed)))
 }
 

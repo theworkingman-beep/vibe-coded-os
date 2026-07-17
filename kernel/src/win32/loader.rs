@@ -6,8 +6,9 @@
 pub use pe_parser::{parse_pe, parse_section_header, MachineType, PeImage, SectionHeader};
 
 use super::{objects, process::Process};
-use crate::mm::page_table::{PageTable, PAGE_EXECUTE, PAGE_PRESENT, PAGE_USER, PAGE_WRITABLE};
+use crate::mm::page_table::{PageTable, PAGE_PRESENT, PAGE_USER, PAGE_WRITABLE};
 use core::ptr;
+use pe_parser::{parse_import_directory, parse_import_thunks, read_rva_string};
 
 /// A minimal hand-crafted x86_64 PE executable used for loader self-tests.
 ///
@@ -48,13 +49,7 @@ pub fn load_into_process(image: &PeImage, process: &mut Process, data: &[u8]) ->
         let Some(section) = parse_section_header(data, offset) else {
             return false;
         };
-        map_section(
-            &section,
-            data,
-            base,
-            image.image_base,
-            page_table.as_mut(),
-        );
+        map_section(&section, data, base, image.image_base, page_table.as_mut());
     }
 
     process.page_table_root = page_table.map(|pt| pt.cr3()).unwrap_or(0);
@@ -82,18 +77,18 @@ fn map_section(
 
     if src_offset + copy_size <= data.len() {
         unsafe {
-            ptr::copy_nonoverlapping(
-                data.as_ptr().add(src_offset),
-                phys_ptr(dest),
-                copy_size,
-            );
+            ptr::copy_nonoverlapping(data.as_ptr().add(src_offset), phys_ptr(dest), copy_size);
         }
     }
 
     // Zero the remainder (BSS-style uninitialized data).
     if copy_size < virtual_size {
         unsafe {
-            ptr::write_bytes(phys_ptr(dest + copy_size as u64), 0, virtual_size - copy_size);
+            ptr::write_bytes(
+                phys_ptr(dest + copy_size as u64),
+                0,
+                virtual_size - copy_size,
+            );
         }
     }
 
@@ -135,6 +130,13 @@ fn allocate_contiguous(pages: usize) -> Option<u64> {
 pub fn load_pe(data: &[u8], pid: u64) -> Option<(objects::Handle, bool)> {
     let image = parse_pe(data)?;
 
+    // Parse and log the import directory. This is real, architecture-
+    // independent PE import-table parsing: for each imported DLL it resolves
+    // the name and counts imported functions. Import *resolution* (binding
+    // imports to the built-in native system DLL shims) is Phase 3 ongoing
+    // work; logging what a binary imports is the first step.
+    log_imports(&image, data);
+
     let size = core::mem::size_of::<Process>();
     let align = core::mem::align_of::<Process>();
     let ptr = crate::mm::alloc_early(size, align)? as *mut Process;
@@ -155,6 +157,21 @@ pub fn load_pe(data: &[u8], pid: u64) -> Option<(objects::Handle, bool)> {
 pub fn requires_translation(guest: MachineType) -> bool {
     let host = host_machine();
     guest != host
+}
+
+/// Parse the PE import directory and log each imported DLL with its function
+/// count. Architecture-independent (pure PE header parsing).
+fn log_imports(image: &PeImage, data: &[u8]) {
+    let descriptors = parse_import_directory(data, image);
+    let mut count = 0;
+    for desc in descriptors.iter().flatten() {
+        let name = read_rva_string(data, image, desc.name_rva).unwrap_or("<bad name rva>");
+        let thunks = parse_import_thunks(data, image, desc.int_rva);
+        let n = thunks.iter().flatten().count();
+        crate::logln!("pe: import {} ({} functions)", name, n);
+        count += 1;
+    }
+    crate::logln!("pe: {} imported DLL(s)", count);
 }
 
 fn host_machine() -> MachineType {

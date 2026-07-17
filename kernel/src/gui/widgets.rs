@@ -19,7 +19,12 @@ pub struct Rect {
 
 impl Rect {
     pub const fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// True if the point lies inside the rectangle.
@@ -112,8 +117,20 @@ impl Button {
             Color::new(0x28, 0x28, 0x28)
         };
         fill_rect(window, self.rect, bg);
-        draw_rect(window, self.rect, if self.enabled { Color::WHITE } else { Color::GRAY });
-        let text_color = if self.enabled { Color::WHITE } else { Color::GRAY };
+        draw_rect(
+            window,
+            self.rect,
+            if self.enabled {
+                Color::WHITE
+            } else {
+                Color::GRAY
+            },
+        );
+        let text_color = if self.enabled {
+            Color::WHITE
+        } else {
+            Color::GRAY
+        };
         let text_x = self.rect.x + (self.rect.width - (self.label_len as i32 * 6)) / 2;
         let text_y = self.rect.y + (self.rect.height - 7) / 2;
         font::draw_text(window, self.label(), text_x, text_y, text_color);
@@ -228,7 +245,10 @@ impl ListBox {
         if self.item_count == 0 {
             return;
         }
-        let next = self.selected.map(|s| (s + 1) % self.item_count).unwrap_or(0);
+        let next = self
+            .selected
+            .map(|s| (s + 1) % self.item_count)
+            .unwrap_or(0);
         self.selected = Some(next);
     }
 
@@ -236,7 +256,10 @@ impl ListBox {
         if self.item_count == 0 {
             return;
         }
-        let prev = self.selected.map(|s| if s == 0 { self.item_count - 1 } else { s - 1 }).unwrap_or(0);
+        let prev = self
+            .selected
+            .map(|s| if s == 0 { self.item_count - 1 } else { s - 1 })
+            .unwrap_or(0);
         self.selected = Some(prev);
     }
 
@@ -261,17 +284,16 @@ impl ListBox {
             if Some(i) == self.selected {
                 fill_rect(
                     window,
-                    Rect::new(self.rect.x + 1, y - 1, self.rect.width - 2, Self::ITEM_HEIGHT),
+                    Rect::new(
+                        self.rect.x + 1,
+                        y - 1,
+                        self.rect.width - 2,
+                        Self::ITEM_HEIGHT,
+                    ),
                     Color::new(0x00, 0x60, 0xC0),
                 );
             }
-            font::draw_text(
-                window,
-                self.item_text(i),
-                self.rect.x + 4,
-                y,
-                Color::WHITE,
-            );
+            font::draw_text(window, self.item_text(i), self.rect.x + 4, y, Color::WHITE);
         }
     }
 
@@ -297,7 +319,10 @@ pub struct ProgressBar {
 
 impl ProgressBar {
     pub fn new(rect: Rect) -> Self {
-        Self { rect, progress: 0.0 }
+        Self {
+            rect,
+            progress: 0.0,
+        }
     }
 
     pub fn draw(&self, window: &mut Window) {
@@ -307,7 +332,12 @@ impl ProgressBar {
         if fill_width > 0 {
             fill_rect(
                 window,
-                Rect::new(self.rect.x + 2, self.rect.y + 2, fill_width, self.rect.height - 4),
+                Rect::new(
+                    self.rect.x + 2,
+                    self.rect.y + 2,
+                    fill_width,
+                    self.rect.height - 4,
+                ),
                 Color::new(0x00, 0x80, 0x00),
             );
         }

@@ -100,7 +100,13 @@ mod x86_64_impl {
         ///
         /// # Safety
         /// The virtual range must not already be mapped.
-        pub unsafe fn map_region(&mut self, virt_base: u64, phys_base: u64, pages: usize, flags: u64) -> bool {
+        pub unsafe fn map_region(
+            &mut self,
+            virt_base: u64,
+            phys_base: u64,
+            pages: usize,
+            flags: u64,
+        ) -> bool {
             for i in 0..pages as u64 {
                 if !self.map(virt_base + i * 4096, phys_base + i * 4096, flags) {
                     return false;
@@ -133,9 +139,9 @@ mod x86_64_impl {
             let Some(pt) = pt else { return false };
 
             let entries = crate::mm::hhdm::phys_to_virt(pt) as *mut u64;
-            entries.add(pt_index).write(
-                phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_NO_CACHE,
-            );
+            entries
+                .add(pt_index)
+                .write(phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_NO_CACHE);
             flush(VirtAddr::new_truncate(virt));
             true
         }
@@ -287,12 +293,7 @@ impl PageTable {
         None
     }
 
-    pub unsafe fn map(
-        &mut self,
-        _virt: u64,
-        _phys: u64,
-        _flags: u64,
-    ) -> bool {
+    pub unsafe fn map(&mut self, _virt: u64, _phys: u64, _flags: u64) -> bool {
         false
     }
 
@@ -310,9 +311,7 @@ impl PageTable {
         self.root
     }
 
-    pub fn translate(&self,
-        _virt: u64,
-    ) -> Option<u64> {
+    pub fn translate(&self, _virt: u64) -> Option<u64> {
         None
     }
 }

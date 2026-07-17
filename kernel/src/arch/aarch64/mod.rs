@@ -41,12 +41,16 @@ pub fn semihost_putchar(byte: u8) {
     }
 }
 
-/// Output a single byte via QEMU semihosting.
+/// Output a single byte to the serial console.
 ///
-/// The QEMU `virt` machine PL011 UART is in device memory that Limine does not
-/// necessarily map into the HHDM, so the easiest reliable debug channel for
-/// AArch64 bring-up is semihosting. This writes to the QEMU debug console and
-/// will be replaced by a real UART/ framebuffer console once paging is set up.
+/// On QEMU `virt` we use the semihosting `SYS_WRITEC` channel: Limine's
+/// higher-half direct map covers RAM but does *not* map device MMIO such as
+/// the PL011 UART at `0x0900_0000`, so writing the PL011 through the HHDM
+/// would data-abort before the kernel's own MMU is programmed. Semihosting
+/// is the reliable early boot channel under QEMU and appears on the host
+/// console. `pl011_putchar` is retained for the real-hardware path: once
+/// the AArch64 MMU is programmed to map the UART MMIO region (Phase 1B
+/// ongoing work), `debug_putchar` can switch to it for non-QEMU targets.
 pub fn debug_putchar(byte: u8) {
     semihost_putchar(byte);
 }

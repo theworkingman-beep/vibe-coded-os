@@ -13,8 +13,8 @@ pub mod desktop;
 pub mod font;
 pub mod widgets;
 
-pub use compositor::WindowId;
 pub(crate) use compositor::Compositor;
+pub use compositor::WindowId;
 
 pub(crate) static COMPOSITOR: Mutex<Option<Compositor>> = Mutex::new(None);
 
@@ -33,12 +33,16 @@ static mut NEEDS_RENDER: bool = true;
 
 /// Mark the framebuffer as dirty so the scene is redrawn on the next frame.
 pub fn request_render() {
-    unsafe { NEEDS_RENDER = true; }
+    unsafe {
+        NEEDS_RENDER = true;
+    }
 }
 
 /// Clear the render demand flag.  Called by the main loop after rendering.
 pub fn clear_render_request() {
-    unsafe { NEEDS_RENDER = false; }
+    unsafe {
+        NEEDS_RENDER = false;
+    }
 }
 
 /// Return true if the compositor has been asked to redraw.
@@ -62,7 +66,10 @@ pub fn render() {
 
 /// Create a new window and return its handle.
 pub fn create_window(title: &str, x: i32, y: i32, width: i32, height: i32) -> Option<WindowId> {
-    COMPOSITOR.lock().as_mut().map(|c| c.create_window(title, x, y, width, height))
+    COMPOSITOR
+        .lock()
+        .as_mut()
+        .map(|c| c.create_window(title, x, y, width, height))
 }
 
 /// Draw text onto the window identified by `id`.

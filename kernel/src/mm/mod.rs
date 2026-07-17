@@ -5,12 +5,11 @@
 //! and a real free-list heap as the global Rust allocator.
 
 pub mod frame_allocator;
-pub mod hhdm;
 pub mod heap;
+pub mod hhdm;
 pub mod page_table;
 
 use crate::boot_info::{MemoryRegion, MemoryRegionKind};
-use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
 

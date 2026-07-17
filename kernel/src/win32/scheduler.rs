@@ -36,11 +36,7 @@ fn alloc_thread_slot() -> Option<usize> {
 /// The thread owns both a kernel stack (for scheduler context) and a user stack
 /// (for ring-3 execution). `page_table_root` is the physical CR3 value that
 /// must be loaded before this thread runs natively.
-pub fn create_thread(
-    pid: u64,
-    entry_point: u64,
-    cr3: u64,
-) -> Option<usize> {
+pub fn create_thread(pid: u64, entry_point: u64, cr3: u64) -> Option<usize> {
     let slot = alloc_thread_slot()?;
 
     // Kernel stack used for cooperative context switching inside the kernel.
@@ -206,7 +202,10 @@ pub extern "C" fn preempt(interrupt_rsp: u64) -> u64 {
 /// host. Does not return.
 pub unsafe fn enter_interpreter(slot: usize) -> ! {
     let Some(t) = thread_mut(slot) else {
-        crate::logln!("scheduler: cannot enter interpreter for missing slot {}", slot);
+        crate::logln!(
+            "scheduler: cannot enter interpreter for missing slot {}",
+            slot
+        );
         crate::hlt();
     };
     t.state = ThreadState::Running;
@@ -258,7 +257,10 @@ pub unsafe fn schedule() {
 #[cfg(feature = "arch_x86_64")]
 pub unsafe fn enter_user_mode(slot: usize) -> ! {
     let Some(t) = thread_mut(slot) else {
-        crate::logln!("scheduler: cannot enter user mode for missing slot {}", slot);
+        crate::logln!(
+            "scheduler: cannot enter user mode for missing slot {}",
+            slot
+        );
         crate::hlt();
     };
 

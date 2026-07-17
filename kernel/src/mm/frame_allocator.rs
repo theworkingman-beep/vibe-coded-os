@@ -97,8 +97,7 @@ impl FrameAllocator {
 
     fn is_bitmap_frame(&self, index: usize) -> bool {
         let frame_addr = self.first_frame + index as u64 * FRAME_SIZE;
-        frame_addr >= self.bitmap_phys
-            && frame_addr < self.bitmap_phys + self.bitmap_bytes as u64
+        frame_addr >= self.bitmap_phys && frame_addr < self.bitmap_phys + self.bitmap_bytes as u64
     }
 
     fn mark(&self, index: usize, used: bool) {

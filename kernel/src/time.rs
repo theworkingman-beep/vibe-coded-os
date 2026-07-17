@@ -26,7 +26,8 @@ impl Timeout {
 
     /// Returns `true` once the timeout has expired.
     pub fn expired(&self) -> bool {
-        crate::arch::monotonic_cycles().wrapping_sub(self.start) >= self.limit.wrapping_sub(self.start)
+        crate::arch::monotonic_cycles().wrapping_sub(self.start)
+            >= self.limit.wrapping_sub(self.start)
     }
 }
 
@@ -49,7 +50,7 @@ pub fn poll_with_timeout<T>(
         }
         // A single pause/yield to reduce bus traffic while polling.
         #[cfg(feature = "arch_x86_64")]
-        unsafe {
+        {
             core::arch::x86_64::_mm_pause();
         }
         #[cfg(feature = "arch_aarch64")]
