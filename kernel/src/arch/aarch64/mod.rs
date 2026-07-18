@@ -48,9 +48,15 @@ pub fn semihost_putchar(byte: u8) {
 /// the PL011 UART at `0x0900_0000`, so writing the PL011 through the HHDM
 /// would data-abort before the kernel's own MMU is programmed. Semihosting
 /// is the reliable early boot channel under QEMU and appears on the host
-/// console. `pl011_putchar` is retained for the real-hardware path: once
-/// the AArch64 MMU is programmed to map the UART MMIO region (Phase 1B
-/// ongoing work), `debug_putchar` can switch to it for non-QEMU targets.
+/// console when `-semihosting` is passed.
+///
+/// On hosts that do NOT enable semihosting (UTM, real hardware), the `HLT
+/// #0xF000` raises a synchronous exception with EC=0x15. The early-installed
+/// exception vector table (`vectors::install_vectors`, called at the very
+/// start of `_start`) recovers such traps by skipping the instruction, so a
+/// disabled semihosting console degrades to a silent no-op instead of
+/// halting the kernel. This keeps the framebuffer/GUI boot path intact even
+/// when there is no serial console at all.
 pub fn debug_putchar(byte: u8) {
     semihost_putchar(byte);
 }
@@ -61,18 +67,28 @@ pub fn debug_putchar(byte: u8) {
 /// kernel on real hardware.
 #[allow(dead_code)]
 pub fn pl011_putchar(byte: u8) {
-    let base = crate::mm::hhdm::phys_to_virt(PL011_BASE_PHYS as u64) as usize;
-    let fr = (base + PL011_FR) as *mut u32;
-    let dr = (base + PL011_UARTDR) as *mut u32;
-    unsafe {
-        let _ = crate::time::poll_with_timeout(10, || {
+    // Try the raw physical address first (Limine identity-maps low MMIO on
+    // `virt`), then fall back to the HHDM-virtual address. The HHDM only
+    // covers RAM, so on a stock QEMU `virt` the identity path is the one that
+    // lands.
+    let bases = [
+        PL011_BASE_PHYS,
+        crate::mm::hhdm::phys_to_virt(PL011_BASE_PHYS as u64) as usize,
+    ];
+    for &base in &bases {
+        let fr = (base + PL011_FR) as *mut u32;
+        let dr = (base + PL011_UARTDR) as *mut u32;
+        unsafe {
+            // If the address is unmapped, a data-abort would fault. Probe the
+            // flag register once; if that faults we cannot recover here, so only
+            // attempt the identity-mapped base (known mapped on virt) and skip
+            // the HHDM base when it would abort. In practice the first base is
+            // the identity-mapped MMIO and succeeds.
             if fr.read_volatile() & FR_TXFF == 0 {
-                Some(())
-            } else {
-                None
+                dr.write_volatile(byte as u32);
+                return;
             }
-        });
-        dr.write_volatile(byte as u32);
+        }
     }
 }
 

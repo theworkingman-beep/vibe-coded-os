@@ -63,9 +63,28 @@ unsafe extern "C" fn aarch64_irq_dispatch() -> u32 {
     irq
 }
 
-/// Synchronous exception handler.  Logs and halts.
+/// Synchronous exception handler.  Returns the next PC to resume at, or 0 to
+/// halt.
+///
+/// Semihosting traps (EC = 0x15) are skipped by advancing past the `HLT #0xF000`
+/// instruction. This lets the kernel boot on hosts that do not enable
+/// semihosting (e.g. UTM, real hardware): every `debug_putchar` becomes a silent
+/// no-op instead of halting the CPU. When semihosting IS enabled (our QEMU
+/// command), QEMU services the `HLT` directly and no exception is ever taken,
+/// so this path is inactive.
+/// Synchronous exception handler.  Returns the next PC to resume at, or 0 to
+/// halt.
+///
+/// `debug_putchar` uses the semihosting `HLT #0xF000` instruction. When
+/// semihosting is ENABLED (our QEMU command), QEMU services the `HLT` directly
+/// and no exception is taken. When semihosting is DISABLED (UTM, real
+/// hardware), the `HLT` traps: QEMU reports it as an undefined instruction
+/// (EC=0x00) on AArch64. We recover by skipping ONLY a `HLT #0xF000` (encoded
+/// `0xD45E0000`) — any other undefined instruction is a real fault and halts.
+/// This makes a disabled semihosting console degrade to a silent no-op so the
+/// framebuffer/GUI boot path still completes and renders the desktop.
 #[no_mangle]
-unsafe extern "C" fn aarch64_sync_handler() {
+unsafe extern "C" fn aarch64_sync_handler() -> u64 {
     let elr: u64;
     let esr: u64;
     let far: u64;
@@ -78,13 +97,23 @@ unsafe extern "C" fn aarch64_sync_handler() {
         out(reg) far,
         options(nomem, nostack)
     );
-    crate::logln!(
-        "aarch64 sync exception at {:#x} esr={:#x} far={:#x}",
-        elr,
-        esr,
-        far
-    );
-    crate::hlt();
+    let ec = (esr >> 26) & 0x3F;
+    // EC 0x15 = AArch64 semihosting (QEMU with -semihosting-config trap).
+    if ec == 0x15 {
+        return elr + 4;
+    }
+    // EC 0x00 = Unknown reason (undefined instruction). Recover only if the
+    // faulting instruction is exactly the semihosting HLT #0xF000.
+    if ec == 0x00 {
+        let insn = unsafe { (elr as *const u32).read_volatile() };
+        if insn == 0xD45E_0000 {
+            return elr + 4;
+        }
+    }
+    // Any other synchronous exception is a real fault. We cannot use the
+    // semihosting logger here (it would re-trap), so halt for diagnostics.
+    let _ = far;
+    0
 }
 
 // Assembly helpers referenced by the vector table below.
@@ -151,7 +180,9 @@ core::arch::global_asm!(
     "add sp, sp, #160",
     "eret",
 
-    // Naked synchronous exception entry: logs and halts.
+    // Naked synchronous exception entry. Saves registers, calls
+    // aarch64_sync_handler (returns the next PC in x0, or 0 to halt), restores
+    // registers, and either erets to the returned PC or halts.
     ".balign 0x10",
     ".global aarch64_sync_entry",
     "aarch64_sync_entry:",
@@ -168,6 +199,22 @@ core::arch::global_asm!(
     "str x18, [sp, #9 * 16]",
     "str x30, [sp, #9 * 16 + 8]",
     "bl aarch64_sync_handler",
+    // x0 = next PC (0 => halt).
+    "cbz x0, aarch64_halt_entry",
+    "msr elr_el1, x0",
+    "ldp x0, x1, [sp, #0 * 16]",
+    "ldp x2, x3, [sp, #1 * 16]",
+    "ldp x4, x5, [sp, #2 * 16]",
+    "ldp x6, x7, [sp, #3 * 16]",
+    "ldp x8, x9, [sp, #4 * 16]",
+    "ldp x10, x11, [sp, #5 * 16]",
+    "ldp x12, x13, [sp, #6 * 16]",
+    "ldp x14, x15, [sp, #7 * 16]",
+    "ldp x16, x17, [sp, #8 * 16]",
+    "ldr x18, [sp, #9 * 16]",
+    "ldr x30, [sp, #9 * 16 + 8]",
+    "add sp, sp, #160",
+    "eret",
 
     // Halt entry used by FIQ/SError/spurious vectors.
     ".balign 0x10",
@@ -176,6 +223,30 @@ core::arch::global_asm!(
     "b {halt}",
     halt = sym crate::hlt,
 );
+
+/// Install the EL1 vector table without any logging or GIC setup. Safe to call
+/// before the logger/HHDM are ready, so the very first `debug_putchar`
+/// (semihosting) can be recovered if the host does not enable semihosting.
+///
+/// # Safety
+///
+/// Must be called once from EL1 on the bootstrap CPU.
+pub unsafe fn install_vectors() {
+    let vbar = aarch64_exception_vectors as *const () as u64;
+    core::arch::asm!(
+        "msr vbar_el1, {0}",
+        "isb",
+        // Mask all interrupts (Debug, SError, IRQ, FIQ) until the kernel
+        // explicitly enables them. The bootloader/firmware may have left the
+        // architectural timer and GIC active; without masking, timer IRQs
+        // storm the CPU before the GIC/timer bring-up is wired, which corrupts
+        // state and powers the machine off within seconds. AArch64 reset masks
+        // DAIF, but EL2 firmware (UEFI on QEMU `virt`) commonly unmasks it.
+        "msr daifset, #0xf",
+        in(reg) vbar,
+        options(nomem, nostack)
+    );
+}
 
 /// Initialize GICv2 and the virtual timer, then install the EL1 vector table.
 ///
@@ -187,14 +258,9 @@ pub unsafe fn init() {
     // timer setup is disabled on this branch because accessing the GIC MMIO
     // region through the HHDM faults on some firmware configurations; it will
     // be re-enabled once the fault is root-caused.
+    install_vectors();
     let vbar = aarch64_exception_vectors as *const () as u64;
     crate::logln!("aarch64: vector table at {:#x}", vbar);
-    core::arch::asm!(
-        "msr vbar_el1, {0}",
-        "isb",
-        in(reg) vbar,
-        options(nomem, nostack)
-    );
     crate::logln!("aarch64: vector table installed");
 
     if false {

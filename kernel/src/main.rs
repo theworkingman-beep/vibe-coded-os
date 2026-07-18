@@ -82,9 +82,18 @@ extern "C" fn _start() -> ! {
 
     #[cfg(feature = "arch_aarch64")]
     {
-        // Early PL011 banner: confirm the UART path works before any
-        // subsystem init. Semihosting is intentionally avoided so the kernel
-        // boots under the documented QEMU command (no `-semihosting`).
+        // Install the exception vector table before *any* debug output. The
+        // aarch64 early console is semihosting (`HLT #0xF000`); on hosts that
+        // do not enable semihosting (UTM, real hardware) that instruction
+        // traps. Installing the table up front lets the sync handler recover
+        // (skip) the semihosting HLT so the kernel still reaches framebuffer
+        // init and renders the desktop instead of halting on a black screen.
+        unsafe {
+            kernel::arch::aarch64::vectors::install_vectors();
+        }
+        // Early banner: confirms the console path works before subsystem
+        // init. Under `-semihosting` this prints "A\n"; without semihosting
+        // the HLT is silently recovered by the sync handler.
         kernel::arch::debug_putchar(b'A');
         kernel::arch::debug_putchar(b'\n');
     }
@@ -188,6 +197,51 @@ extern "C" fn _start() -> ! {
         kernel::logln!("WARNING: no usable memory region found.");
     }
 
+    // Bring up the framebuffer / GUI as early as possible. On emulated hosts
+    // (UTM under TCG, or any software-emulated run) the Win32 phase self-tests
+    // below are slow; if the framebuffer is only initialized after them the
+    // screen stays black for the whole boot and the user sees only a black
+    // screen. Acquiring the framebuffer now and rendering once gives an early
+    // visible desktop while the rest of the bring-up continues.
+    let mut have_framebuffer = false;
+    if let Some(fb_resp) = FRAMEBUFFER_REQUEST.response() {
+        if let Some(fb) = fb_resp.framebuffers().first() {
+            let info = kernel::boot_info::FrameBufferInfo::from_limine(fb);
+            let len = fb.size();
+            let fb_addr = fb.address() as usize;
+            kernel::logln!(
+                "fb addr={:#x} len={} bpp={} stride={}",
+                fb_addr,
+                len,
+                info.bytes_per_pixel,
+                info.stride
+            );
+            // Limine already exposes the framebuffer as a virtual pointer; do
+            // not translate it through the HHDM.
+            let buffer = unsafe { core::slice::from_raw_parts_mut(fb_addr as *mut u8, len) };
+            unsafe {
+                kernel::panic::register_framebuffer(buffer.as_mut_ptr(), len, info);
+            }
+            kernel::gui::init_compositor(buffer, info);
+            kernel::gui::desktop::init(info.width as i32, info.height as i32);
+            // Early splash: render the (empty) desktop immediately so the
+            // display is not black while the self-tests and installer run.
+            kernel::gui::render();
+            kernel::logln!(
+                "Framebuffer: {}x{} stride={} bpp={}",
+                info.width,
+                info.height,
+                info.stride,
+                info.bytes_per_pixel * 8
+            );
+            have_framebuffer = true;
+        } else {
+            kernel::logln!("Framebuffer request returned no framebuffers.");
+        }
+    } else {
+        kernel::logln!("No framebuffer available.");
+    }
+
     // Run the Win32 per-phase self-tests now that the early heap is available.
     // These exercise real subsystem features (IPC, DLL shims, interpreter,
     // registry, environment) and log results; none enter user mode.
@@ -211,49 +265,12 @@ extern "C" fn _start() -> ! {
         kernel::logln!("Modules request returned no response; installer disabled.");
     }
 
-    // The Win32 subsystem is initialized; we do not run the synthetic PE
-    // self-test here because it enters user mode and never returns, which
-    // would prevent the GUI from starting.
-
-    // Bring up the framebuffer / GUI if Limine provided one.
-    if let Some(fb_resp) = FRAMEBUFFER_REQUEST.response() {
-        if let Some(fb) = fb_resp.framebuffers().first() {
-            let info = kernel::boot_info::FrameBufferInfo::from_limine(fb);
-            let len = fb.size();
-            let fb_addr = fb.address() as usize;
-            kernel::logln!(
-                "fb addr={:#x} len={} bpp={} stride={}",
-                fb_addr,
-                len,
-                info.bytes_per_pixel,
-                info.stride
-            );
-            // Limine already exposes the framebuffer as a virtual pointer; do
-            // not translate it through the HHDM.
-            let buffer = unsafe { core::slice::from_raw_parts_mut(fb_addr as *mut u8, len) };
-            unsafe {
-                kernel::panic::register_framebuffer(buffer.as_mut_ptr(), len, info);
-            }
-            kernel::gui::init_compositor(buffer, info);
-            kernel::gui::desktop::init(info.width as i32, info.height as i32);
-            // Phase 6: GDI primitives + Win32 window-manager model self-tests.
-            // These create extra desktop windows; render once afterward so
-            // they are visible.
-            kernel::gui::gdi_self_test();
-            kernel::win32::win32k::self_test();
-            kernel::gui::render();
-            kernel::logln!(
-                "Framebuffer: {}x{} stride={} bpp={}",
-                info.width,
-                info.height,
-                info.stride,
-                info.bytes_per_pixel * 8
-            );
-        } else {
-            kernel::logln!("Framebuffer request returned no framebuffers.");
-        }
-    } else {
-        kernel::logln!("No framebuffer available.");
+    // Phase 6: GDI primitives + Win32 window-manager model self-tests. These
+    // create extra desktop windows; render once afterward so they are visible.
+    if have_framebuffer {
+        kernel::gui::gdi_self_test();
+        kernel::win32::win32k::self_test();
+        kernel::gui::render();
     }
 
     kernel::logln!("Kernel idle; reading input.");
