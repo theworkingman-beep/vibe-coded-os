@@ -2,8 +2,8 @@ name: Daily Build
 
 on:
   # Run every day at 06:00 UTC.
-  schedule:
-    - cron: '0 6 * * *'
+  # schedule:
+  #   - cron: '0 6 * * *'
   # Allow manual trigger.
   workflow_dispatch:
 
